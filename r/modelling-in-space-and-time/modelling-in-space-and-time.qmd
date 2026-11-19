@@ -1,0 +1,1605 @@
+---
+title: "Modelling in Space and Time"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    keep_tex: true
+    number_sections: true
+    toc: true
+    toc_depth: 2
+    fig_caption: true
+    includes:
+      in_header: header.tex
+    pandoc_args: ["--pdf-engine-opt=-papersize=a4"]
+
+---
+
+<br>
+AI-supported/AI-integrated use is permitted in this assessment.  
+I acknowledge the following use of GenAI tools in this assessment:
+
+- **I have used GenAI** to help me understand key theories and concepts.
+- **I have used GenAI** to help bug fix code.
+
+<br>
+
+## Question 1: Sea Surface Temperature Modelling
+
+### a): Plotting and commenting on the Sea Surface Temperature given
+
+```{r, warning=FALSE}
+library(geoR)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(knitr)
+library(stringr)
+library(tidyr)
+library(lubridate)
+library(dlm)
+library(forecast)
+library(gt)
+
+kuroshio <- read_csv("kuroshio100.csv")
+
+# Cleaning the data, removing any rows with missing values
+kuro <- na.omit(kuroshio)
+
+# Convert to geodata object
+kuro.geo <- as.geodata(kuro, coords.col = c("lon", "lat"), data.col = "sst")
+
+
+plot(kuro.geo)
+ggplot(kuro, aes(x = lon, y = lat, color = sst)) +
+  geom_point(size = 2) +
+  scale_color_viridis_c() +
+  labs(title = "Sea Surface Temperature - Kuroshio Current (Jan 1996)",
+       color = "SST (°C)") +
+  theme_minimal()
+
+# Histogram of SST
+ggplot(kuro, aes(x = sst)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "black") +
+  labs(title = "Histogram of SST", x = "SST (°C)", y = "Frequency")
+
+```
+<br>
+
+It is clear from the spatial plot that as the latitude increases the temperature decreases with the warmest points sitting around 32.5 latitude, clearly indicating a spatial trend within the data. 
+
+<br><br>
+
+### b): Removing 5 random points from the data set
+<br>
+
+```{r, warning=FALSE}
+
+# Selecting 5 rows at random
+set.seed(256)
+test_idx <- sample(1:nrow(kuro), 5)
+test_data <- kuro[test_idx, ]
+
+kable(test_data[, c("id", "lon", "lat", "sst")],
+      col.names = c("Station ID", "Lon", "Lat", "SST"))
+
+train_data <- kuro[-test_idx, ]
+
+
+```
+
+<br><br>
+
+### c): Fitting a spatial model using the variogram approach:
+
+<br>
+
+1.  First I need to use a sample variogram to check whether I need to set a maximum distance and nugget.
+
+```{r, warning=FALSE}
+set.seed(256)
+
+train_geo <- as.geodata(train_data, coords.col = c("lon", "lat"), data.col = "sst")
+
+# Calculate the sample variogram
+v.emp <- variog(train_geo, option = "bin")
+plot(v.emp, pch = 19, main = "Sample Variogram")
+
+v.emp$n
+
+# Setting the max distance to 6
+v.emp2 <- variog(train_geo, option = "bin", max.dist=6)
+plot(v.emp2, pch = 19, main = "Sample Variogram Max Dist 6")
+
+
+# Setting the max distance to 7
+v.emp3 <- variog(train_geo, option = "bin", max.dist=7)
+plot(v.emp3, pch = 19, main = "Sample Variogram Max Dist 7")
+
+
+
+
+```
+
+<br>
+
+After looking at the initial variogram it is clear that the data eventually starts to tail off and no longer follows the pattern shown at the start, this change appears to happen at around a distance of 6 or 7 as there are fewer data pairs in these regions. Therefore it will improve the accuracy of the model if a maximum distance is set to eliminate these distances. To check what value to set both maximum distances of 6 and 7 were plotted. The plot with maximum distance of 7 showed a clearer exponential relationship and overall appeared to follow the same trend throughout the data. 
+
+
+Testing the default model, which will fit a matern 0.5 covariance function with an estimated nugget:
+
+<br>
+
+```{r, warning=FALSE}
+set.seed(256)
+
+vari.default <- variofit(v.emp3)
+vari.default
+
+par(mar=c(4,4,2,2))
+plot(v.emp3, pch = 19)
+lines(vari.default)
+
+
+
+
+
+```
+
+<br>
+
+Using the variofit function to find the best model for the data, by first fitting an exponential with an estimated nugget of 0.001 and then again with a fixed nugget. Then plotting the summary of the model to assess the fit:
+
+<br>
+
+```{r, warning=FALSE}
+set.seed(256)
+
+train_geo$coords <- jitter(train_geo$coords, amount = 0.0001)
+
+
+# Fitting exponential with nugget
+fit.exp <- variofit(v.emp3, cov.model = "exponential", nugget=0.001, fix.nugget=TRUE)
+
+
+xv.e <- xvalid(train_geo, model = fit.exp)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.e, error = TRUE, std.error = FALSE, psc=19)
+
+
+
+# Fitting exponential without the nugget
+fit.exp2 <- variofit(v.emp3, cov.model = "exponential", fix.nugget=TRUE)
+
+
+xv.e2 <- xvalid(train_geo, model = fit.exp2)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.e2, error = TRUE, std.error = FALSE, psc=19)
+
+
+```
+
+<br>
+
+Now a Matern model is tested with kappa set to 3/2 and an estimated nugget at 0.001. 
+<br>
+
+```{r, warning=FALSE}
+set.seed(256)
+
+# Fitting Matern, with nugget and kappa set to 1.5
+fit.matern <- variofit(v.emp3, cov.model = "matern", nugget = 0.001, fix.nugget=TRUE, kappa = 1.5)
+
+
+xv.m <- xvalid(train_geo, model = fit.matern)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.m, error = TRUE, std.error = FALSE, psc=19)
+
+```
+
+<br>
+
+```{r, warning=FALSE}
+set.seed(256)
+
+# Fitting Matern, with nugget and kappa set to 1.5
+fit.gaus <- variofit(v.emp3, cov.model = "gaussian", nugget = 0.001, fix.nugget=TRUE, kappa = 1.5)
+
+
+xv.g <- xvalid(train_geo, model = fit.gaus)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.g, error = TRUE, std.error = FALSE, psc=19)
+
+```
+
+<br>
+
+Another Matern model is then fitted, with the same nugget but kappa changed to 5/2:
+
+<br>
+
+```{r, warning=FALSE}
+set.seed(256)
+# Fitting Matern, with nugget and kappa set to 2.5
+fit.matern2 <- variofit(v.emp3, cov.model = "matern", nugget = 0.001, fix.nugget=TRUE, kappa = 2.5)
+
+
+xv.m2 <- xvalid(train_geo, model = fit.matern2)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.m2, error = TRUE, std.error = FALSE, psc=19)
+
+summary(fit.matern2)
+
+# Fitting Matern, with nugget and kappa set to 2.5
+fit.matern2 <- variofit(v.emp3, cov.model = "matern", nugget = 0.001, ini.cov.pars = c(87, 4.2), fix.nugget=TRUE, kappa = 2.5)
+
+
+xv.m2 <- xvalid(train_geo, model = fit.matern2)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.m2, error = TRUE, std.error = FALSE, psc=19)
+
+summary(fit.matern2)
+```
+
+<br>
+
+Plotting all four of these models onto the data shows clearly that the Mater covariate function is a much better fit.
+<br>
+
+```{r, warning=FALSE}
+
+# Plotting the model's on the data to visualise
+plot(v.emp3, main = "Variogram + Fitted Models", pch = 19)
+lines(fit.exp, col = "blue")
+lines(fit.matern, col = "red")
+lines(fit.matern2, col = "green")
+lines(fit.gaus, col="yellow")
+legend("bottomright",
+       legend = c("Exponential", "Matérn", "Matern 2", "Gaussian"),
+       col = c("blue", "red", "green", "yellow"), lty = 1)
+
+```
+<br>
+
+Therefore, comparing the models with the smoothness parameter (kappa) set to 3/2 and 5/2 will give the most accurate model. In the predicted vs observed plots the points in the matern 2 model with kappa set to 5/2 appear to be more spread along the normal line, showing more reliability and accuracy at predicted values. The residual plot however appears to be more centered on the normal line for the model with kappa set to 3/2, suggesting that this model follows more closely the normal distribution assumption, which hte kriging framwork assumes. But, looking at the residuals in the histogram there is a very slightly more centered structure to the histogram for the kappa 5/2 model therefore suggesting a slightly tighter error spread again supporting the idea that the second model is better at predicting data points than the first. Then lastly the residual vs fitted plots show that both of the models are relatively centered around zero, with a few outliers around the (-4,4) region. However, the matern 2 model appears to be more tightly scattered around zero, especially at higher fitted values. Therefore overall the best model to use out of these tested is the Matern model with kappa set to 2.5, nugget set at 0.001, with a maximum distance set at 7. Even though the plot for the residuals appears to favour the original matern model. 
+
+
+The fitted parameters in this model were the nugget at 0.001, then the partial sill, given through the model summary as 87.46 then followed by the range again given in the model summary as 4.24. The trend function used is the "cte" which assumes a constant mean. 
+<br>
+
+
+```{r}
+
+# Plotting the final model on the data to visualise
+plot(v.emp3, main = "Variogram + Fitted Models", pch = 19)
+lines(fit.matern2, col = "blue")
+legend("bottomright",
+       legend = c("Matern 2"),
+       col = c("blue"), lty = 1)
+
+
+```
+<br>
+This second matern model variogram shows fairly accurate spatial predictions, showing how this model is a good fit for the data given.
+
+<br>
+
+### d): Fitting a Gaussian Process model using maximum likelihood
+<br><br>
+
+```{r, warning=FALSE}
+fit.mle <- likfit(train_geo, cov.model = "exponential", nugget=0.001, ini.cov.pars = c(87, 4.2), kappa = 2.5, trend = "cte",lik.method = "ML")
+
+
+xv.mle <- xvalid(train_geo, model = fit.mle)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(xv.mle, error = TRUE, std.error = FALSE, pch = 19)
+
+summary(fit.mle)
+
+```
+
+<br>
+Validating the model shows that predicted vs observed points are scattered around the normal line, but with some noise around the extremes. The QQ plot also performs better for this model than other models used previously, but the points don't sit perfectly along the normal line, suggesting that the model is not perfectly gaussian. Overall the model is good at predicting the data but not perfect, especially at the extremes. 
+
+The model summary shows:
+<br>
+```{r, warning=FALSE, echo=FALSE}
+
+# Create the parameter table
+param_table <- data.frame(
+  Parameter = c("β (mean)", "σ² (partial sill)", "ϕ (range)"),
+  Estimate = c(16.07, 8.196, 4.3)
+)
+
+# Create the gt table
+gt_table <- param_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Fitted Parameters from Maximum Likelihood Estimation**")
+  ) %>%
+  fmt_number(
+    columns = vars(Estimate)
+  ) %>%
+  cols_label(
+    Parameter = "Parameter",
+    Estimate = "Estimate",
+  ) %>%
+  opt_table_outline() %>%
+  tab_options(
+    table.font.size = "small",
+    data_row.padding = px(4),
+    column_labels.font.weight = "bold"
+  )
+gt_table
+```
+
+
+<br>
+Where the mean is the average SST across the region, the partial still is how much the temperature varies across the region due to the spatial correlation and then the range represents how far away two locations can be while still being spatially correlated. 
+
+<br>
+
+### e): Estimating using the Baysian approach with initial discrete priors
+<br><br>
+
+```{r, warning=FALSE} 
+set.seed(256)
+
+ex.grid <- as.matrix(expand.grid(seq(0,50,l=21), seq(0,50,l=21)))
+
+ex.bayes.5 <- krige.bayes(geodata = train_geo, loc=ex.grid,
+                        model = model.control(cov.m="matern", kappa=0.5),
+                        prior = prior.control(phi.discrete=seq(1, 6, l=50),
+                                              phi.prior="reciprocal",
+                                              tausq.rel.discrete = seq(0.05, 0.5, l=50),
+                                              tausq.rel.prior='reciprocal'))
+
+ex.bayes1.5 <- krige.bayes(geodata = train_geo, loc=ex.grid,
+                        model = model.control(cov.m="matern", kappa=1.5),
+                        prior = prior.control(phi.discrete=seq(1, 6, l=50),
+                                              phi.prior="reciprocal",
+                                              tausq.rel.discrete = seq(0.05, 0.5, l=50),
+                                              tausq.rel.prior='reciprocal'))
+
+
+summary(ex.bayes.5$posterior$sample)
+summary(ex.bayes1.5$posterior$sample)
+```
+
+<br>
+
+```{r, warning=FALSE} 
+
+par(mar=c(4,4,2,2))
+plot(ex.bayes1.5, type="h", tausq.rel = FALSE, col=c("red", "blue"))
+
+par(mfrow=c(1,3), mar=c(4,4,2,2))
+hist(ex.bayes.5$posterior$sample$phi, breaks = 30)
+hist(ex.bayes.5$posterior$sample$sigmasq, breaks = 30)
+hist(ex.bayes.5$posterior$sample$beta, breaks = 30)
+
+
+
+par(mar=c(4,4,2,2))
+plot(ex.bayes.5, type="h", tausq.rel = FALSE, col=c("red", "blue"))
+
+par(mfrow=c(1,3), mar=c(4,4,2,2))
+hist(ex.bayes1.5$posterior$sample$phi, breaks = 30)
+hist(ex.bayes1.5$posterior$sample$sigmasq, breaks = 30)
+hist(ex.bayes1.5$posterior$sample$beta, breaks = 30)
+
+
+```
+
+<br>
+### f): Using the models created to predict the values for the poitns removed at the start
+
+<br><br>
+
+First thing is to predict the points from the original matern model as shown in part c:
+
+```{r, warning=FALSE} 
+test_coords   <- as.matrix(test_data[, c("lon", "lat")])
+
+prediction_points <- test_data[, c("lon", "lat")]
+
+predictions_matern <- krige.conv(train_geo, locations = prediction_points,
+                                 krige = krige.control(obj.model = fit.matern2))
+
+print(predictions_matern)
+
+
+print(test_data)
+
+
+```
+
+<br>
+Now, the same thing predicting the points with the model created using the maximum likelihood estimation, as used in part d:
+
+<br>
+
+```{r, warning=FALSE} 
+
+predictions_mle <- krige.conv(train_geo, locations = prediction_points,
+                                 krige = krige.control(obj.model = fit.mle))
+
+print(predictions_mle)
+```
+
+<br>
+Now with the baysian approach from part e:
+
+```{r, warning=FALSE} 
+
+test_coords_nodup <- jitter(as.matrix(test_coords), amount = 0.0001)
+
+bayes.model <- krige.bayes(
+  geodata = train_geo,
+  locations = test_coords_nodup,
+  model = model.control(cov.model = "matern", kappa = 1.5),
+  prior = prior.control(
+    phi.discrete = seq(1, 6, l = 50),
+    phi.prior = "reciprocal",
+    tausq.rel.discrete = seq(0.05, 0.5, l = 50),
+    tausq.rel.prior = "reciprocal"
+  )
+)
+
+print(bayes.model$predictive$mean)
+
+
+
+
+```
+
+<br>
+
+```{r, warning=FALSE} 
+
+# Create the table as a data frame
+pred_table <- data.frame(
+  Longitude = c(149.97, 149.97, 146.00, 149.81, 143.70),
+  Latitude = c(30.24, 30.24, 33.40, 30.24, 38.80),
+  `Observed SST (°C)` = c(19.3, 19.3, 18.1, 19.3, 6.0),
+  `Prediction (c)` = c(19.272711, 19.272711, 18.090909, 19.250926, 6.418235),
+  `Prediction (d)` = c(19.248833, 19.248833, 18.099919, 19.299806, 9.195762),
+  `Prediction (e)` = c(19.251082, 19.251062, 18.093321, 19.279705, 8.927382)
+)
+
+# Format using gt
+gt(pred_table) %>%
+  tab_header(
+    title = "SST Predictions at 5 Random locations"
+  ) %>%
+  fmt_number(
+    columns = everything(),
+    decimals = 3
+  )
+```
+
+<br>
+
+Two of the randomly selected points are at the same longitude and latitude, this is just due to the seed used, and therefore the model's predict the temperature's for these two regions as the same since they are modelling the same data point twice. In the removed locations, the predictions are fairly accurate, particularly for the higher SST values of 18 and 19 degrees, where all three models remain within 0.02 degrees of the observed values. The coldest site has the largest miss, with an observed SST of 6.0 degrees and predictions of 8.9 to 9.2 degrees, which is quite a large overestimation. This implies that the model performs worse in colder climates, most likely as a result of a lack of nearby training points or a poor local fit in that area of the spatial field. As highlighted earlier the model struggles at the extremes so this is to be expected when attempting to predict a data point with a significantly different temperature compared to the mean. 
+
+<br>
+
+## Question 2: The Atlantic Overturning Circulation
+<br><br>
+
+### a): Plotting the data
+<br>
+
+```{r, warning=FALSE} 
+load("~/Documents/space and time/MOC.RData")
+
+head(MOCmean)
+head(.Random.seed)
+
+moc <- MOCmean
+
+# Create a time series starting in Jan 2017 with monthly frequency
+moc_ts <- ts(moc, start = c(2017, 1), frequency = 12)
+
+# Plot the time series
+plot(moc_ts, main = "Atlantic Meridional Overturning Circulation (AMOC) at 26°N",
+     ylab = "AMOC Strength", xlab = "Year", col = "blue", lwd = 2)
+
+
+```
+<br>
+
+After plotting the data, it is clear that over time the Atlantic Meridional Overturning Circulation (AMOC) strength is decreasing gradually up until around 2021, where the trend appears to reverse and begin to increase. Suggesting the mean is non stationary, and will need to be differenced. 
+<br>
+
+### b): Fitting ARIMA and ARMA models to the data and selecting the best one
+
+<br><br>
+
+
+First the ACF and Partial ACF are plotted along with the original model with the 1st and 2nd differences to check whether the data is a stationary series or not. 
+<br>
+
+```{r, warning=FALSE} 
+
+# Removing the last 8 months from the data and setting it as the testing data
+split_time <- time(moc_ts)[length(moc_ts) - 8]
+moc2 <- window(moc_ts, end   = split_time)
+moc_test  <- window(moc_ts, start = split_time + deltat(moc_ts))
+
+
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(moc2, main='ACF')
+pacf(moc2, main='PACF')
+
+# Plotting the ARIMA model
+par(mfrow = c(1, 3))
+plot(moc2, main = "ARIMA(1,1,0)", ylab = "moc2")
+plot(diff(moc2), main = "1st Difference")
+plot(diff(diff(moc2)), main = "2nd Difference")
+
+```
+
+<br>
+
+```{r, warning=FALSE}
+# Plotting the ACF and PACF of the differenced series
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(diff(moc2), main = 'ACF')
+pacf(diff(moc2), main = 'PACF')
+
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(diff(diff(moc2)), main = 'ACF')
+pacf(diff(diff(moc2)), main = 'PACF')
+
+```
+
+<br>
+
+As shown in the plot with the original data there is a downward trend within the data, so the series is non-stationary and therefore the 1st and 2nd differences are also shown. Where the 1st and 2nd differences do appear to fluctuate around zero, suggesting the differencing has removed the trend and produced a stationary mean. Then looking at the ACF and PACF plots for the two differenced series, the 1st differenced is series appears to be spread more within the 95% confidence interval than the 2nd differenced plot, again suggesting that the 1st differenced ARIMA model is going to be the best choice for this data. Also since the original data is non-stationary the ARIMA models will be better suited for fitting as ARMA performs better when the original data has a stationary mean. 
+
+
+After looking more closely at the ACF and PACF plots for the first difference series, in the ACF plot there is a significant spike at lag 1 and 2, suggesting that there are two MA-terms and the q is equal to 2 in the overall ARIMA model. The PACF plot shows a gradual decrease with significant spikes at lag 1, 2 and 5, meaning the AR-term has 3 parts and the p = 3 in the ARIMA model. But it is hard to come to a clear conclusion as to what model to use based off of these plots as they both appear to cut off early. 
+
+
+But first the ARMA models are create by fitting both an AR(1) and MA(1) model:
+
+<br>
+
+```{r, warning=FALSE} 
+
+# ARMA model MA(1): ARMA(0,0,1)
+
+model1 <- Arima(moc2, order=c(0,0,1))
+model1 # AIC=300.01
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model1), main="acf")
+pacf(residuals(model1), main="pacf")
+
+
+tsdiag(model1)
+```
+
+<br>
+
+```{r, warning=FALSE} 
+
+# ARMA model AR(1) : ARMA(1,0,0)
+
+model2 <- Arima(moc2, order=c(1,0,0))
+model2 #AIC=299.86
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model2), main="acf")
+pacf(residuals(model2), main="pacf")
+
+
+tsdiag(model2)
+
+```
+<br>
+
+Now, since the data had to be differenced at the start, it is better to fit ARIMA models, do the d term in the model will always be set to 1.
+
+Producing an ARIMA(3,1,2) model, as these values appeared to be what was shown in the original ACF an PACF plots, the summaresi along with the residual diagnostics are also created. 
+<br>
+
+
+```{r, warning=FALSE} 
+
+model4 <- Arima(moc2, order=c(3,1,2))
+model4 # AIC=303.04
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model4), main="acf")
+pacf(residuals(model4), main="pacf")
+
+
+tsdiag(model1)
+
+```
+
+<br>
+
+With an AIC value of 303.04 the fit is worse than the AR(1) and MA(1) models, so the 3rd and 2nd orders are potentially too high causing the fit to suffer. 
+
+Now testing the ARIMA(1,1,1):
+
+```{r, warning=FALSE} 
+model5 <- Arima(moc2, order=c(1,1,1))
+model5 #AIC=297.04
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model5), main="acf")
+pacf(residuals(model5), main="pacf")
+
+
+tsdiag(model2)
+```
+<br>
+
+The corresponding AIC of 297.04 suggests that this lower order ARIMA is better suited despite the residuals appearing to look almost identical. 
+Fitting the ARIMA(0,1,1):
+
+```{r, warning=FALSE} 
+model6 <- Arima(moc2, order=c(0,1,1))
+model6 # AIC=295.12
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model6), main="acf")
+pacf(residuals(model6), main="pacf")
+
+
+tsdiag(model6)
+```
+<br>
+
+After testing a number of different model assumptions and fitting them, the model with the best AIC value is the ARIMA(0,1,1) where the value is 295.12. 
+
+<br>
+
+### c): Finding the most suitable model for quarterly means instead of monthly means
+<br><br>
+
+```{r, warning=FALSE} 
+
+# aggregate to quarterly means:
+moc_q <- aggregate(moc2, nfrequency = 4, FUN = mean)
+
+moc_q
+
+
+# Plotting the ARIMA model
+par(mfrow = c(1, 4))
+plot(moc_q, main = "ARIMA(1,1,0)", ylab = "moc2")
+plot(diff(moc_q), main = "1st Difference")
+plot(diff(moc_q,lag=4), main = "Seasonal Difference")
+plot(diff(diff(moc_q)), main = "2nd Difference")
+
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(diff(moc_q), main='ACF')
+pacf(diff(moc_q), main='PACF')
+
+acf(diff(moc_q, lag = 4), main = 'ACF')
+pacf(diff(moc_q, lag = 4), main = 'PACF')
+```
+
+<br>
+
+Again the quarterly averaged data highlights the decreasing trend within the data even stronger, and showing that the 1st differenced series is going to be the most suitable. The ACF appears to decay slowly again supporting the requirement of the differenced series. The 3rd plot also shows the seasonal difference within the data by adding the 'lag=4' term.
+
+
+Testing some of the ARMA models with the new quarterly data:
+
+<br>
+
+```{r, warning=FALSE} 
+
+model7 <- Arima(moc_q, order=c(1,0,0))
+model7 # AIC=83.02
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model7), main="acf")
+pacf(residuals(model7), main="pacf")
+
+
+tsdiag(model7)
+
+```
+
+<br>
+
+```{r, warning=FALSE} 
+
+model8 <- Arima(moc_q, order=c(0,0,1))
+model8 # AIC=83.17
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model8), main="acf")
+pacf(residuals(model8), main="pacf")
+
+
+tsdiag(model8)
+
+```
+
+<br>
+
+Now moving onto the d=1 ARIMA models:
+
+```{r, warning=FALSE} 
+
+model9 <- Arima(moc_q, order=c(0,1,1))
+model9 # AIC=78.49
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model9), main="acf")
+pacf(residuals(model9), main="pacf")
+
+
+tsdiag(model9)
+
+```
+
+<br>
+
+The first model tested was the ARIMA(0,1,1) since it was the best fit with the monthly aggregated data and with an AIC value of 78.49 for this quarterly set, the differenced series is already clearly more suitable and produces a better fitting model. As again shown in the ACF plot, where there is no significant spike after lag 0 and everything is within the confidence interval, and the p values shown in the Ljung-Box statisic plot are also all above the significance line.
+
+<br>
+ 
+```{r, warning=FALSE} 
+
+model10 <- Arima(moc_q, order=c(1,1,0))
+model10 # AIC=79.87
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model10), main="acf")
+pacf(residuals(model10), main="pacf")
+
+
+tsdiag(model10)
+
+```
+
+<br>
+
+A slightly higher AIC value of 79.87 is given to the ARIMA(1,1,0) but still appears to be a good fit for the data, as supported by the ACF and Ljung-Box statistic plot. Again there is only 1 significant spike and all remaining are contained within the confidence interval, and the p values are all above the significance level on the Ljung-Box statistic. 
+
+<br>
+
+```{r, warning=FALSE} 
+
+model11 <- Arima(moc_q, order=c(3,1,2))
+model11 # AIC=81.19
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model11), main="acf")
+pacf(residuals(model11), main="pacf")
+
+
+tsdiag(model11)
+```
+
+<br>
+These p and q values were chosen for the same reason as the ARIMA model in part b, based off of the original ACF and PACF plots, but similarly to that model this one doesn't fit as well as other alternatives. This is evident through the AIC value being 81.19, as well as the p values sitting above the significance level on the Ljung-Box statistic.
+
+<br>
+
+```{r, warning=FALSE} 
+
+mod_auto <- auto.arima(moc_q, seasonal = TRUE)
+mod_auto # AIC = 78.49
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(mod_auto), main="acf")
+pacf(residuals(mod_auto), main="pacf")
+
+
+tsdiag(mod_auto)
+
+
+```
+
+<br>
+
+Using auto.arima to verify how close the model's chosen are to the automatically chosen models. The AIC value produced is 78.49, which is identical to the ARIMA(0,1,1) model from the start, clearly showing the reliability of the model fitted previously. 
+
+Now testing the best model the ARIMA(0,1,1) with an added seasonal component:
+<br>
+
+```{r, warning=FALSE} 
+
+model12 <- Arima(moc_q, order=c(0,1,1), seasonal = list(order = c(0, 1, 1)))
+model12 # AIC=66.93
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model12), main="acf")
+pacf(residuals(model12), main="pacf")
+
+
+tsdiag(model12)
+
+```
+
+<br>
+
+This model produces an AIC value of 66.93, making it significantly the best fitting model so far. To test if this seasonal component causes the ARIMA(1,1,1) to become to best model it will also be fitted:
+
+
+```{r, warning=FALSE} 
+
+model13 <- Arima(moc_q, order=c(1,1,1), seasonal = list(order = c(1, 1, 1)))
+model13 # AIC=70.05
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model13), main="acf")
+pacf(residuals(model13), main="pacf")
+
+
+tsdiag(model13)
+
+```
+
+<br>
+
+With an AIC value of 70.05 this model is a lot better than the model without the season element but as before the ARIMA(0,1,1) is superior. Therefore the best model to fit this data is the SARIMA(0,1,1).
+
+
+### d): Fitting a dynamic linear model to both the monthly and quarterly averaged data
+
+<br>
+
+First, the DLM for the quarterly data is created:
+
+```{r, warning=FALSE} 
+seasonal_model <- dlmModSeas(4)
+summary(seasonal_model)
+seasonal_model$GG
+
+poly_model <- dlmModPoly(order=3)
+poly_model$GG
+
+seasonal_model$FF
+poly_model$FF
+
+seasonal_model$W
+poly_model$W
+
+seasonal_model$V
+poly_model$V
+
+linear_seasonal4 <- dlmModPoly(2) + dlmModSeas(4)
+linear_seasonal4$GG
+linear_seasonal4$FF
+linear_seasonal4$W
+linear_seasonal4$V
+
+buildFun1 <- function(x) {
+  dlmModPoly(order = 2, dV = exp(x[1]), dW = c(0, exp(x[2])))
+}
+
+fit1 <- dlmMLE(moc_q, parm = c(0,0), build = buildFun1)
+fit1$par
+
+fitted_model1 <- buildFun1(fit1$par)
+fitted_model1
+
+buildFun1 <- function(x) {
+  dlmModPoly(order = 2, dV = exp(x[1]), dW = c(0, exp(x[2]))) +
+    dlmModSeas(frequency = 4, dV = 0, dW = c(exp(x[3]), rep(0,2)))
+}
+
+fit1 <- dlmMLE(moc_q, parm = c(0,0,0), build = buildFun1)
+fit1$par
+fitted_model1 <- buildFun1(fit1$par)
+V(fitted_model1)
+W(fitted_model1)
+
+# Producing the diagnostics for the model
+
+
+filtered_dlm1 <- dlmFilter(moc_q, fitted_model1)
+residuals_dlm1 <- drop(as.numeric(filtered_dlm1$y)) -
+                  dropFirst(filtered_dlm1$m[,1])
+
+par(mfrow = c(1, 3))
+ts.plot(residuals_dlm1,
+        main = "Standardized Residuals (DLM Model)",
+        col  = "darkgray",
+        ylab = "Residuals")
+abline(h = 0, col = "red", lty = 2)
+acf(residuals_dlm1, main = "ACF of Residuals (DLM Model)")
+pacf(residuals_dlm1, main = "PACF of Residuals (DLM Model)")
+
+
+
+
+```
+<br>
+
+The residual plot shows the model to not be performing as well as hoped, as there is a large burn in, up until around 2018 where the residuals are very large and even after 2018 the residuals fluctuate between +/- 3. Likely due to the large disparity within and between each quarter, when compared to the alternate monthly data. Then the ACF plot shows a significant spike at lag 4, suggesting the seasonal trend shown within the data was not fully captured by the quarterly DLM. 
+
+Followed by the original monthly data:
+
+<br>
+
+```{r, warning=FALSE} 
+seasonal_model <- dlmModSeas(12)
+summary(seasonal_model)
+seasonal_model$GG
+
+poly_model <- dlmModPoly(order=3)
+poly_model$GG
+
+seasonal_model$FF
+poly_model$FF
+
+seasonal_model$W
+poly_model$W
+
+seasonal_model$V
+poly_model$V
+
+linear_seasonal4 <- dlmModPoly(2) + dlmModSeas(4)
+linear_seasonal4$GG
+linear_seasonal4$FF
+linear_seasonal4$W
+linear_seasonal4$V
+
+buildFun2 <- function(x) {
+  dlmModPoly(order = 2, dV = exp(x[1]), dW = c(0, exp(x[2])))
+}
+
+fit2 <- dlmMLE(moc2, parm = c(0,0), build = buildFun2)
+fit2$par
+
+fitted_model2 <- buildFun2(fit2$par)
+fitted_model2
+
+buildFun2 <- function(x) {
+  dlmModPoly(order = 2, dV = exp(x[1]), dW = c(0, exp(x[2]))) +
+    dlmModSeas(frequency = 12, dV = 0, dW = c(exp(x[3]), rep(0,10)))
+}
+
+fit2 <- dlmMLE(moc2, parm = c(0,0,0), build = buildFun2)
+fit2$par
+fitted_model2 <- buildFun2(fit2$par)
+V(fitted_model2)
+W(fitted_model2)
+
+# Creating the ACF and PACF for the DLM model
+
+filtered_dlm2 <- dlmFilter(moc2, fitted_model2)
+residuals_dlm2 <- drop(as.numeric(filtered_dlm2$y)) -
+                  dropFirst(filtered_dlm2$m[,1])
+
+par(mfrow = c(1, 3))
+ts.plot(residuals_dlm2,
+        main = "Standardized Residuals (DLM Model)",
+        col  = "darkgray",
+        ylab = "Residuals")
+abline(h = 0, col = "red", lty = 2)
+acf(residuals_dlm2, main = "ACF of Residuals (DLM Model)")
+pacf(residuals_dlm2, main = "PACF of Residuals (DLM Model)")
+
+```
+Again the start requires a long burn in with large residuals, but the following residuals after appear to show a more consistently lower value, close to zero, but with occasional large outliers. But the ACF and PACF show some of the seasonal trend has been captured this time, unlike the quarterly data. 
+
+<br>
+
+### e): Forecasting the defined models in the previous sections
+
+<br><br>
+
+Starting with the forecasting for the default ARIMA(0,1,1) model as shown in part b), where the data is the monthly average without any seasonality. 
+
+```{r, warning=FALSE}
+forecast_b <- forecast(model6, h = 8)
+
+# Plotting the forcast onto the data
+autoplot(forecast_b) +
+  labs(title = "ARIMA(0,1,1) forecast for last 8 months", 
+       y = "AMOC") 
+
+forecast_b
+```
+<br>
+The forecast shows a constant AMOC value of just below 16, with an extremely large confidence interval, which appears to be as wide as the extremes within the data. Highlighting the model's inefficiency to correctly predict future values due to all of the excess noise within the data when fitting the monthly aggregated data. 
+
+
+Now moving onto the forecast for part C:
+
+<br>
+
+```{r, warning=FALSE}
+
+forecast_c <- forecast(model12, h = 8)
+
+# Plotting the forcast onto the data
+autoplot(forecast_c) +
+  labs(title = "SARIMA(0,1,1) forecast for last 8 months", 
+       y = "AMOC") 
+
+forecast_c
+```
+<br>
+Although there is less data points within the data set used to create this model, the resulting forecasts follow the trend shown previously and the respective confidence interval is also more consistant and smaller than the previous model. Likely due to the increased accuracy of the fit due to the decrease in noise within the data. 
+
+<br>
+
+```{r, warning=FALSE}
+
+buildFun_monthly <- function(x) {
+  dlmModPoly(order = 2, dV = exp(x[1]), dW = c(0, exp(x[2]))) +
+    dlmModSeas(frequency = 12, dV = 0, dW = c(exp(x[3]), rep(0,10)))
+}
+
+fit_monthly <- dlmMLE(moc2, parm = c(0, 0, 0), build = buildFun_monthly)
+fitted_monthly <- buildFun_monthly(fit_monthly$par)
+filt_monthly <- dlmFilter(moc2, fitted_monthly)
+
+
+x_month <- cbind(moc2, dropFirst(filt_monthly$a[, c(1, 3)]))
+colnames(x_month) <- c("AMOC", "Trend", "Seasonal")
+plot(window(x_month, start = c(2017, 2)), type = "o", main = "AMOC: DLM Trend + Seasonal (Monthly)")
+
+# Forecasting 8 months ahead
+forecast_month <- dlmForecast(filt_monthly, nAhead = 8)
+
+# Adding the confidence intervals
+sqrtR <- sapply(forecast_month$R, function(m) sqrt(m[1,1]))
+lower <- forecast_month$a[,1] + qnorm(0.025, sd = sqrtR)
+upper <- forecast_month$a[,1] + qnorm(0.975, sd = sqrtR)
+
+
+forecast_ts <- ts.union(window(moc_ts, start = c(2020, 1)),
+                        forecast_month$a[,1],
+                        forecast_month$f,
+                        lower, upper)
+
+colnames(forecast_ts) <- c("Observed", "State Mean", "Forecast", "Lower", "Upper")
+
+par(mar = c(4, 4, 2, 2))
+plot(forecast_ts, plot.type = "single", type = "o",
+     pch = c(1, 20, 20, NA, NA),
+     col = c("darkgrey", "brown", "brown", "blue", "blue"),
+     ylab = "AMOC Strength", main = "DLM Forecast of AMOC (Monthly)",
+     ylim = range(forecast_ts, na.rm = TRUE))
+legend("bottomright", legend = c("Observed", "Forecast", "95% Interval"),
+       bty = 'n', pch = c(1, 20, NA), lty = 1, col = c("darkgrey", "brown", "blue"))
+
+par(mar = c(4, 4, 2, 2))
+
+# Repeating the stpes but for the quarterly data instead
+buildFun_quarterly <- function(x) {
+  dlmModPoly(order = 2, dV = exp(x[1]), dW = c(0, exp(x[2]))) +
+    dlmModSeas(frequency = 4, dV = 0, dW = c(exp(x[3]), rep(0, 2)))
+}
+
+fit_quarterly <- dlmMLE(moc_q, parm = c(0, 0, 0), build = buildFun_quarterly)
+fitted_quarterly <- buildFun_quarterly(fit_quarterly$par)
+filt_quarterly <- dlmFilter(moc_q, fitted_quarterly)
+
+
+x_qtr <- cbind(moc_q, dropFirst(filt_quarterly$a[, c(1, 3)]))
+colnames(x_qtr) <- c("AMOC", "Trend", "Seasonal")
+plot(window(x_qtr, start = start(moc_q)[1] + 1), type = "o", 
+     main = "AMOC: DLM Trend + Seasonal (Quarterly)")
+
+
+forecast_quarterly <- dlmForecast(filt_quarterly, nAhead = 8)
+
+sqrtR_qtr <- sapply(forecast_quarterly$R, function(m) sqrt(m[1, 1]))
+lower_qtr <- forecast_quarterly$a[, 1] + qnorm(0.025, sd = sqrtR_qtr)
+upper_qtr <- forecast_quarterly$a[, 1] + qnorm(0.975, sd = sqrtR_qtr)
+
+forecast_qtr_ts <- ts.union(window(moc_q, start = c(2020, 1)),
+                            forecast_quarterly$a[, 1],
+                            forecast_quarterly$f,
+                            lower_qtr, upper_qtr)
+
+colnames(forecast_qtr_ts) <- c("Observed", "State Mean", "Forecast", "Lower", "Upper")
+
+# Plotting
+par(mar = c(4, 4, 2, 2))
+plot(forecast_qtr_ts, plot.type = "single", type = "o",
+     pch = c(1, 20, 20, NA, NA),
+     col = c("darkgrey", "brown", "brown", "blue", "blue"),
+     ylab = "AMOC Strength", main = "DLM Forecast of AMOC (Quarterly)",
+     ylim = range(forecast_qtr_ts, na.rm = TRUE))
+legend("bottomright", legend = c("Observed", "Forecast", "95% Interval"),
+       bty = 'n', pch = c(1, 20, NA), lty = 1, col = c("darkgrey", "brown", "blue"))
+
+par(mar = c(4, 4, 2, 2))
+
+
+```
+
+<br>
+
+A dynamic linear model was fitted to the monthly AMOC data using a linear trend and a seasonal element. The model picked up the overall shape of the data well, including the downward trend and some seasonal changes, but didn’t fully capture the sharp swings near the end. Forecasts were stable, with reasonable uncertainty. The same type of model was fitted to the quarterly data, using a seasonal parameter based on the quarterly data set. This version gave a smoother trend and clearer seasonal pattern. Forecasts were more stable but had more noise, making it more useful for longer-term predictions. In summary, the monthly model gives more detail but contains more noise, while the quarterly model is more consistent and easier predicts slightly more accurately.
+
+<br>
+
+## Section 3): California Daily Temperature
+
+<br><br>
+
+```{r, warning=FALSE}
+# Loading in the data
+
+temps <- read.csv("MaxTempCalifornia.csv")
+head(temps)
+meta <- read.csv("metadataCA.csv")
+head(meta)
+```
+<br>
+
+### a): Spatial and time series plots
+
+<br><br>
+
+```{r, warning=FALSE}
+temps <- read.csv("MaxTempCalifornia.csv")
+meta <- read.csv("metadataCA.csv")
+
+# wranggling
+
+temps_long <- temps %>%
+  mutate(Date = ymd(Date)) %>%
+  pivot_longer(cols = -Date, names_to = "Location", values_to = "Temp")
+
+meta <- meta %>%
+  rename(Longitude = Long, Latitude = Lat, Elevation = Elev)
+
+temps_long <- left_join(temps_long, meta, by = "Location")
+
+# Time series plots for each location
+ggplot(temps_long, aes(x = Date, y = Temp, color = Location)) +
+  geom_line(alpha = 0.8) +
+  facet_wrap(~Location, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Daily Maximum Temperatures in California (2012)",
+       x = "Date", y = "Temperature (°C)")
+
+# Regional spatial plot
+site_means <- temps_long %>%
+  group_by(Location, Longitude, Latitude) %>%
+  summarise(MeanTemp = mean(Temp, na.rm = TRUE), .groups = "drop")
+
+ggplot(site_means, aes(x = Longitude, y = Latitude, color = MeanTemp)) +
+  geom_point(size = 5) +
+  theme_minimal() +
+  scale_color_viridis_c() +
+  labs(title = "Average Maximum Temperature by Location (2012)",
+       x = "Longitude", y = "Latitude", color = "Mean Temp (°C)")
+
+```
+<br>
+
+The daily maximum temperatures in California all show a very similar and clear seasonal trend, although the peak temperature ranges from around 37 degrees as seen in LA up to around 55 in the Death Valley. Then the spatial plot shows that on average the coastal regions of California tend to have a lower mean temperature compared to the more inland desert regions. Despite the differing ranges and maximum temperatures, the plots all show the same trend, as to be expected since all of the cities are in California so although there are minor changes the overall temperatures will be roughly consistent. Initially the data appears to have non-stationary mean so it is likely that the differenced data will be used to create the models and therefore they will be fitted with ARIMA models. 
+
+<br>
+
+### b): Fitting a spatial Gaussian process model using maximum likelihood estimation
+<br><br>
+
+```{r, warning=FALSE}
+
+temps_raw <- read_csv("MaxTempCalifornia.csv", col_types = cols())
+meta_raw  <- read_csv("metadataCA.csv",       col_types = cols())
+
+# Wranggling
+temps <- temps_raw %>%
+  mutate(
+    date = as.Date( as.character(Date), format = "%Y%m%d" )
+  ) %>%
+  select(-Date) %>%
+  pivot_longer(
+    cols      = -date,
+    names_to  = "site",
+    values_to = "temp"
+  ) %>%
+  mutate(site = str_replace_all(site, "\\.", " "))
+
+meta <- meta_raw %>% mutate(site = trimws(Location))
+
+d13 <- temps %>% filter(date == ymd("2012-12-13")) %>%
+  left_join(meta, by = "site") %>% select(site, Long, Lat, Elev, temp)
+
+
+test_sites <- c("San Diego", "Fresno")
+train <- filter(d13, !site %in% test_sites)
+test  <- filter(d13,   site %in% test_sites)
+
+geodata <- as.geodata(train, coords.col = c("Long","Lat"), data.col = "temp",
+  covar.col = "Elev"
+)
+
+# Fitting the gaussian
+gaussian <- likfit(geodata, ini.cov.pars = c( var(train$temp)*0.5, 1 ),  
+  nugget = var(train$temp)*0.1, cov.model = "exponential", trend = ~ Elev,       
+  lik.method   = "ML"
+)
+
+pred <- krige.conv(geodata, locations = as.matrix(test[,c("Long","Lat")]),
+  krige = krige.control(type.krige = "ok", cov.model  = "exponential",
+    obj.model  = gaussian
+  )
+)
+
+# Printing out the predictions
+results <- test %>%
+  mutate(pred.temp = pred$predict, pred.sd   = sqrt(pred$krige.var)
+  )
+
+print(results)
+
+summary(gaussian)
+
+```
+
+<br>
+
+The predicted temperatures for San Diego and Fresno is 16.01 and 11.42 respectively with associated predicted standard deviations of 2.63 and 1.92. With an elevation trend added to the model where the higher elevated regions are predicted to be cooler.
+
+Since the predicted temperature for Fresno is quitefar off the true value due to the trend element, the model will be validated to see if it the best fit:
+
+```{r, warning=FALSE}
+
+# Vaidating the data
+valid <- xvalid(geodata, model = gaussian)
+par(mfrow=c(3,2), mar=c(2,2,1,1))
+plot(valid, error = TRUE, std.error = FALSE, psc=19)
+
+```
+
+This validation plot clearly shows that the Gaussian maximum likelihood model is able to correctly predict any missing data points, as the residuals in the QQ plot sit tightly to the normal line. 
+
+<br>
+
+### c): Time series modelling to predict maximum temperatures in Fresno and San Diego
+<br><br>
+
+```{r, warning=FALSE}
+
+# Separating the data to only include the required dates
+
+# Extracting just San Diego and Fresno
+san  <- temps %>% filter(site == "San Diego")  %>% arrange(date)
+fresno  <- temps %>% filter(site == "Fresno")    %>% arrange(date)
+
+start <- ymd("2012-12-08")
+
+# Creating new datasets of just the required dates for each city
+train_s <- san %>% filter(date <= start)
+test_s  <- san  %>% filter(date >  start & date <= ymd("2012-12-13"))
+
+
+train_f <- fresno  %>% filter(date <= start)
+test_f  <- fresno  %>% filter(date >  start & date <= ymd("2012-12-13"))
+
+```
+
+
+Now that the data has been separted into the two main data frames: the training and testing data for each city, where the testing data contains all of the temperatures corresponding with the dates between the 9th-13th December, and the training data is the data from all of the other dates within the original MaxTempCalifornia data set. 
+
+Using the time series modelling, either an ARMA or ARIMA model will need to be fitted to the data, and in the same way as before the best way to see which of these to use is to plot the data and check for a non-stationary mean, as this would then require the differenced data to be used instead, making the model an ARIMA.
+<br>
+
+```{r, warning=FALSE}
+
+# Plotting the ACF and PACF for San Diego
+
+san_ts <- ts(train_s$temp, frequency = 1)
+
+# Plotting the ARIMA model
+par(mfrow = c(1, 3))
+plot(san_ts, main = "ARIMA(1,1,0)", ylab = "temp")
+plot(diff(san_ts), main = "1st Difference")
+plot(diff(diff(san_ts)), main = "2nd Difference")
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(san_ts, main='ACF')
+pacf(san_ts, main='PACF')
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(diff(san_ts), main='ACF')
+pacf(diff(san_ts), main='PACF')
+
+```
+<br>
+
+It is clear from the overall data plot that there is a non-stationary mean, which is then sorted by differencing the data once as the plot then shows a consistent zero centered pattern. So therefore an ARIMA model will be fitted, then having a look at the associated ACF and PACF for the differenced data it shows that the ACF appears to have a significant spike at lag 2 but then tails off and there are no more strong correlations, then the PACF has its main significant spike at lag 2. So the first model fitted is the ARIMA(2,1,2)
+
+<br>
+
+```{r, warning=FALSE}
+
+# Plotting the ACF and PACF for San Diego
+fresno_ts <- ts(train_f$temp, frequency = 1)
+
+# Plotting the ARIMA model
+par(mfrow = c(1, 3))
+plot(fresno_ts, main = "ARIMA(1,1,0)", ylab = "temp")
+plot(diff(fresno_ts), main = "1st Difference")
+plot(diff(diff(fresno_ts)), main = "2nd Difference")
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(fresno_ts, main='ACF')
+pacf(fresno_ts, main='PACF')
+
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(diff(fresno_ts), main='ACF')
+pacf(diff(fresno_ts), main='PACF')
+
+```
+
+Similarly to the San Diego data the model again has a non-stationary mean and will need to be differenced as well as the ACF and PACF which follow the same trends, of cutting off and then gradually decreasing resulting in the same model being initially fitted again.
+
+But now fitting the ARIMA(2,1,2) to the San Diego training data:
+
+```{r, warning=FALSE}
+# ARIMA model (2,1,2) for San Diego
+
+model_san <- Arima(san_ts, order=c(2,1,2))
+model_san # AIC=1542.31
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model_san), main="acf")
+pacf(residuals(model_san), main="pacf")
+
+
+tsdiag(model_san)
+```
+<br>
+
+with an AIC value of 1542.31 it initially appears to be adequate at fitting the data, supported by the Ljung-Box Statistic where all of the p values are well above the significance line. The residuals also appear to be centered around 0 and spread around +/- 3. The same model will then be fitted to the Fresno data as well:
+
+<br>
+
+```{r, warning=FALSE}
+
+# ARIMA model (2,1,2) for Fresno
+
+model_fresno <- Arima(fresno_ts, order=c(2,1,2))
+model_fresno # AIC=1689.87
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model_fresno), main="acf")
+pacf(residuals(model_fresno), main="pacf")
+
+
+tsdiag(model_fresno)
+
+
+```
+
+With an AIC value of 1689.87 this model initially does a slightly worse job of fitting the data than with San Diego, but despite this the p values are still above the significance line and the residuals are relatively evenly scattered around 0 but are negatively skewed.
+
+Overall the best fitting model for the San Diego is the ARIMA(1,1,2):
+
+
+```{r, warning=FALSE}
+# ARIMA model (1,1,2) for San Diego
+
+model_san2 <- Arima(san_ts, order=c(1,1,2))
+model_san2 # AIC=1540.41
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model_san2), main="acf")
+pacf(residuals(model_san2), main="pacf")
+
+
+tsdiag(model_san2)
+```
+Fitting this same model for the Fresno data set gives:
+
+
+<br>
+
+```{r, warning=FALSE}
+# ARIMA model (1,1,2) for Fresno
+
+model_fresno2 <- Arima(fresno_ts, order=c(1,1,2))
+model_fresno2 # AIC=1691.86
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model_fresno2), main="acf")
+pacf(residuals(model_fresno2), main="pacf")
+
+
+tsdiag(model_fresno2)
+```
+<br>
+
+With an AIC value of 1691.96 the fit of this model is insigficantly less than the originally fitted model, as well as the Ljung-Box plot showing the p values all above the significance line and the evenly scattered residuals. 
+
+With these chosen models the next step is to then forecast the predicted temperatures for San Diego and Fresno between the 9th and 13th of December. 
+<br>
+
+
+```{r, warning=FALSE}
+
+forecast_san <- forecast(model_san2, h = 5)
+
+# Sorting out the dates for the table
+dates <- seq(ymd("2012-12-09"), ymd("2012-12-13"), by = "day")
+
+# Create the table
+pred_san <- tibble(
+  date       = dates,
+  actual     = test_s$temp,
+  forecast   = as.numeric(forecast_san$mean),
+  percentage_error = abs((actual - forecast) / actual * 100)
+)
+
+print(pred_san)
+
+```
+
+<br>
+
+The chosen time series model has predicted the temperatures to all sit around 19.22, with the average actual temperature of San Diego over the course of the 5 days is 18.56. The model predicts the data to gradually increase throughout the 5 day unknown period, as the training data used for the model is only 1 year so the model can not accurately predict the patterns within the data for months it hasn't been trained on. 
+
+
+Then the same thing again to predict the maximum temperatures on the same dates in Fresno:
+
+<br>
+
+```{r, warning=FALSE}
+
+# Creating the same table but for Fresno
+
+forecast_fresno <- forecast(model_fresno2, h = 5)
+
+dates <- seq(ymd("2012-12-09"), ymd("2012-12-13"), by = "day")
+
+pred_fresno <- tibble(
+  date       = dates,
+  actual     = test_f$temp,
+  forecast   = as.numeric(forecast_fresno$mean),
+  percentage_error = abs((actual - forecast) / actual * 100)
+)
+
+print(pred_fresno)
+
+```
+
+A similar pattern exists with the Fresno predictions as well as the predicted temperatures do increase across the range each day but with a larger degree of change between days. The overall actual average temperature across the 5 days is 15.44, while the predicted temperatures have an average of 16.837996. 
+
+
+Now using the same model to predict the temperatures for the next set of dates from the 13th-17th of December:
+
+```{r, warning=FALSE}
+
+# Separating the data to only include the required dates
+
+start2 <- ymd("2012-12-12")
+
+# Creating new datasets of just the required dates for each city
+train_s2 <- san %>% filter(date <= start2)
+test_s2  <- san  %>% filter(date >  start2 & date <= ymd("2012-12-17"))
+
+train_f2 <- fresno  %>% filter(date <= start2)
+test_f2  <- fresno  %>% filter(date >  start2 & date <= ymd("2012-12-17"))
+
+san_ts2 <- ts(train_s2$temp, frequency = 1)
+fresno_ts2 <- ts(train_f2$temp, frequency = 1)
+
+```
+
+Now the data is set up with the correct dates for the training and testing data sets the same ARIMA(1,1,2) model can then be fitted to the training data in order to predict the missing dates, using the exact same method as used previously with the first set. 
+
+
+```{r, warning=FALSE}
+# Second set of missing dates
+
+# ARIMA model (1,1,2) for San Diego
+
+model_san3 <- Arima(san_ts2, order=c(1,1,2))
+model_san3 # AIC=1557.78
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model_san3), main="acf")
+pacf(residuals(model_san3), main="pacf")
+
+
+tsdiag(model_san3)
+
+```
+
+<br>
+
+This new model initially appears to fit the data slightly worse with the new training data as the AIC value is now 1557.78 but the change is so insignificant that it doesn't warrant a change in the model parameters, the p values produced from the Ljung-Box Statistic are also all above the significance line so the model is sufficient at predicted the data. The change in AIC will be due to the slight differences in temperature in the two different sets of missing dates. 
+
+<br>
+
+```{r, warning=FALSE}
+# ARIMA model (1,1,2) for Fresno
+
+model_fresno3 <- Arima(fresno_ts2, order=c(1,1,2))
+model_fresno3 # AIC=1713.84
+par(mfrow=c(1,2), mar=c(4,4,2,2))
+acf(residuals(model_fresno3), main="acf")
+pacf(residuals(model_fresno3), main="pacf")
+
+
+tsdiag(model_fresno3)
+```
+<br>
+
+Again the Fresno ARIMA model has a lower AIC value with this new training data but is only slightly worse, along with good fitting p values and residuals, so this model is going to be used again for the new dates.
+
+Then forecasting the two new models to predict the unknown temperatures from December 13th-17th:
+
+<br>
+
+
+```{r, warning=FALSE}
+
+# Same table as before but for the predictions of the second set of missing 
+# values
+
+forecast_san2 <- forecast(model_san3, h = 5)
+
+dates2 <- seq(ymd("2012-12-13"), ymd("2012-12-17"), by = "day")
+
+pred_san2 <- tibble(
+  date       = dates2,
+  actual     = test_s2$temp,
+  forecast   = as.numeric(forecast_san2$mean),
+  percentage_error = abs((actual - forecast) / actual * 100)
+)
+
+print(pred_san2)
+
+```
+
+This time the average of the actual temperatures is 15.9 and the average of the predicted temperatures 18.70909. As expected this model is less equipped to predict the missing data points 
+
+
+<br>
+
+```{r, warning=FALSE}
+
+# Fresno
+
+forecast_fresno2 <- forecast(model_fresno3, h = 5)
+
+dates2 <- seq(ymd("2012-12-13"), ymd("2012-12-17"), by = "day")
+pred_fresno2 <- tibble(
+  date       = dates2,
+  actual     = test_f2$temp,
+  forecast   = as.numeric(forecast_fresno2$mean),
+  percentage_error = abs((actual - forecast) / actual * 100)
+)
+
+print(pred_fresno2)
+
+```
+
+As expected again the model for the second set of missing dates is less accurate than the first, with an average actual temperature of 14.8 and then an average predicted temperature of 14.088092. 
+
+<br>
+
+### d): Comparing each training set
+
+<br><br>
+
+The following table contains the precicted vs actual temperatures for San Diego and Freson on December 13th for both of the fitted ARIMA models with differing training sets:
+
+```{r, warning=FALSE}
+
+# Creating the final comparison table 
+comparison_table <- tibble(
+  City              = c("San Diego", "Fresno"),
+  Actual_Temp       = c(16.1, 16.7),  
+  Predicted_Model1  = c(19.25570	, 17.34825),  
+  Predicted_Model2  = c(17.65201, 11.75455)   
+)
+
+
+kable(
+  comparison_table,
+  caption = "Actual vs Predicted Temperature for December 13",
+  col.names = c("City", "Actual (°C)", "First set (°C)", "Second set (°C)"),
+  digits = 1
+)
+
+```
+
+<br>
+
+As shown in the table the second set of model's fitted predict the temperature to be a lot lower, this is likely because when fitting and predicted models with ARIMA the only data used to model is the data before the forecast, and since the second set included the dates from the 9th-12th of December that the first model didn't have these colder days would have affected the forecasts produced by the second model. 
+
+The main way to improve the model's prediction would be to have another year before 2012 so that the model can understand the full cyclical pattern of the seasonality within the data in orde to more accurately predict the data within each month easier if required. 
+
+

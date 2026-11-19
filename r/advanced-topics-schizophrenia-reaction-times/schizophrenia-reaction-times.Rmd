@@ -1,0 +1,845 @@
+---
+title: "MTHM017 - Advanced Topics in Statistics"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+always_allow_html: yes
+---
+
+<style type="text/css">
+  body{
+  font-size: 12pt;
+}
+</style>
+
+<br>
+AI-supported/AI-integrated use is permitted in this assessment.  
+I acknowledge the following use of GenAI tools in this assessment:
+
+- **I have used GenAI** to help me understand key theories and concepts.
+- **I have used GenAI** to help bug fix code.
+- **I have used GenAI** to help format tables.
+
+<br>
+
+
+## **A): Bayesian Inference**
+<br>
+
+#### 1): Producing Histograms of the Reaction Times
+
+```{r include=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(gridExtra)
+library(knitr)
+library(kableExtra)
+library(R2jags)
+library(MCMCvis)
+```
+
+```{r include=FALSE, warning=FALSE}
+library(readr)
+read.csv("~/Downloads/rtimes.csv")
+rtimes <- read.csv("~/Downloads/rtimes.csv")
+```
+
+
+```{r warning=FALSE}
+# Data set wrangling
+
+rtimes2 = as.data.frame(t(select(rtimes, -"X")))
+colnames(rtimes2) <- paste0("p",  1:17)
+
+# Plotting the histograms
+
+plot_list <- list()
+
+for (i in colnames(rtimes2)) {
+  
+  p = ggplot(rtimes2, aes_string(x = i)) +
+  geom_histogram(binwidth=80, fill="blue", colour="black") +
+  ggtitle(i) +
+  xlim(200,1750) +
+  labs(x="Reaction times (ms)", y="Frequency") +
+  theme_minimal()
+  
+  plot_list[[i]] <- p
+}
+```
+
+
+```{r warning=FALSE}
+# plotting the first 5 non-schizophrenics
+do.call(grid.arrange, c(plot_list[1:5], ncol=2))
+```
+
+
+```{r warning=FALSE}
+# plotting the last 6 non-schizophrenics
+do.call(grid.arrange, c(plot_list[6:11], ncol=2))
+```
+
+```{r warning=FALSE}
+# plotting the 6 schizophrenics
+do.call(grid.arrange, c(plot_list[12:17], ncol=2))
+```
+
+##### 2): Log Transformations
+<br>
+
+**Model Assumptions**
+<br>
+
+For *non-schizophrenic* individuals, we assume that \( \alpha_i \) follows a normal distribution with mean \( \mu \) and variance \( \sigma_{\alpha}^{2} \), that is:
+
+\[
+\alpha_i \sim N(\mu, \sigma_{\alpha}^{2}), \quad i = 1, 2, \dots, 11.
+\]
+
+For the *schizophrenics*, we assume that the mean of \( \alpha_i \) is \( \mu + \beta \), while the variance remains \( \sigma_{\alpha}^{2} \). That is:
+
+\[
+\alpha_i \sim N(\mu + \beta, \sigma_{\alpha}^{2}), \quad i = 12, 13, \dots, 17.
+\]
+
+<br>
+These given normal regression models use the logarithm of the measured reaction times because it normalizes the distribution, as most reaction times are skewed towards the lower end, with a long tail, so normalizing the reaction times makes the data appear more symmetrical and centered around the normal. Another reason is to reduce the affect that anomaly's have on the overall trend on the data as performing the log transforms will reduce the impact of them. The log transform also reduces the variance at large values leading to a more consistent vairance across the board with all the reaction times. 
+
+
+
+<br>
+```{r warning=FALSE}
+# Performing the log transform
+rtimes_log <- log(rtimes2)
+```
+
+```{r warning=FALSE}
+# Using the apply function to find the standard deviation of each row, representing each person
+rlog_sd <- apply(rtimes_log, 2, sd)
+
+rlog_sd%>%
+  kbl(caption = "SD of Log-Transformed Reaction Times ") %>%
+  kable_styling(bootstrap_options = c("hover", "condensed"), full_width = FALSE)
+
+```
+<br>
+Initially the reaction times for the schizophrenic people (p12-17) are on the whole significantly higher than the non-schizophrenic people, also supported by the histograms shown previously where the schizophrenic people not only showed higher reactions ona verage but also had a much larger spread of the data when compared to the non-schizophrenic.
+
+<br>
+
+#### 3): Assigning Uniform Priors to Each Parameter
+
+<br>
+
+The parameters of the model are:
+<br>
+
+- \( \mu \): Represents the mean reaction time for the 11 non-schizophrenic people.
+
+<br>
+
+- \( \sigma_{\alpha}^2 \): Represents the variance in reaction times across the non-schizophrenic and schizophrenic people.
+
+<br>
+
+- \( \beta \): Represents the difference in mean reaction time between the 11 non-schizophrenic people and the remaining 6. schizophrenic people.
+
+<br>
+
+- \( \tau \): Represents the amount of delay in the response from the schizophrenic people.
+
+<br>
+
+- \( \lambda \): Represents the probability of a delay (\( \tau \)) in the response from the schizophrenic people.
+
+<br>
+
+
+Then assigning non-informative uniform prior distributions to each parameter:
+<br>
+```{r warning=FALSE, echo=FALSE}
+  mu ~ dunif(-10, 10)
+  sigma_y ~ dunif(0, 10)
+  sigma_alpha ~ dunif(0, 10)
+  beta ~ dunif(-10, 10)  
+  tau ~ dunif(0, 10)  
+  lambda ~ dunif(0, 1)
+```
+<br>
+The prior distributions were chosen as they all have a wide range, so that the do not limit the model's flexibility. both of the variances are between (0, 10) since the variance can not be negative while also restricting it to avoid very large values. Lambda is also then between (0 ,1) since it represents a probability so can only take values betwene 0 and 1.  
+
+
+<br>
+
+#### 4): Create this Model in JAGS
+
+```{r warning=FALSE}
+jags.mod <- function(){
+  # Reaction time of non-schizophrenics
+  for(i in 1:11){
+    for(j in 1:30){
+      y.ns[i,j] ~ dnorm(alpha.ns[i], p.y)
+    }
+    alpha.ns[i] ~ dnorm(mu,p.alpha)
+  }
+  # Reaction time for schizophrenics
+  for(i in 1:6){
+    for(j in 1:30){
+      z[i,j] ~ dbern(lambda)
+      y.s[i,j] ~ dnorm(alpha.s[i] + tau * z[i,j], p.y)  
+    }
+    alpha.s[i] ~ dnorm(mu + beta, p.alpha)
+  }
+  # Priors
+  mu ~ dunif(-10, 10)
+  sigma_y ~ dunif(0, 10)
+  sigma_alpha ~ dunif(0, 10)
+  beta ~ dunif(-10, 10)  
+  tau ~ dunif(0, 10)  
+  lambda ~ dunif(0, 1)
+  p.y <- 1 / sigma_y
+  p.alpha <- 1 / sigma_alpha 
+}
+```
+
+<br>
+
+```{r warning=FALSE}
+# Using the data to give accurate initial estimate values 
+
+# For the mean mu
+mu_initial <- mean(as.matrix(rtimes_log[, 1:11]))
+print(paste("The initial value of mu is:",mu_initial))
+
+# For beta, as it is the difference in the means of the two groups the ns mean is subtracted from it
+beta_initial <- mean(as.matrix(rtimes_log[, 12:17])) - mu_initial
+print(paste("The initial value of beta is:",beta_initial))
+
+# For tau I have calculated the difference between the average schizophrenic person and maximum reaction timed non-schizophrenic person
+tau_initial <- mean(apply(rtimes_log[, 12:17], 2, max) - apply(rtimes_log[, 12:17], 2, median))
+print(paste("The initial value of tau is:",tau_initial))
+
+
+sigma_y_initial <- sd(as.matrix(rtimes_log))
+print(paste("The initial value of sigma y is:",sigma_y_initial))
+
+sigma_alpha_initial <- sd(apply(rtimes_log, 2, mean))
+print(paste("The initial value of sigma alpha is:",sigma_alpha_initial))
+
+```
+
+<br>
+
+```{r warning=FALSE}
+set.seed(256) # For reproducibility, will keep the same throughout
+
+y.ns <- t(rtimes_log[, 1:11])
+y.s <- t(rtimes_log[, 12:17])
+
+jags.data <- list('y.ns' =y.ns, 'y.s' =y.s)
+
+# Parameters we want to monitor
+jags.param <- c("mu", "beta", "tau", "sigma_y", "sigma_alpha", "lambda")
+
+# Specifying initial values
+initial.1 <- list(mu = 5.72, beta = 0.42, tau = 0.77, sigma_y = 0.35, sigma_alpha = 0.26, lambda = 0.58)
+
+initial.2 <- list(mu = 6.6, beta = 0.68, tau = 0.4, sigma_y = 0.52, sigma_alpha = 0.4, lambda = 0.32)
+
+jags.init <- list(initial.1, initial.2)
+
+```
+<br>
+
+```{r warning=FALSE}
+# Used ChatGPT for some bug fixing as kept getting an error saying that 'y.s' was out of range
+jags.mod.fit <- jags(data = jags.data, inits = jags.init,
+                    parameters.to.save = jags.param,
+                    n.iter = 10000, n.burnin = 5000, n.chain = 2, model.file = jags.mod)
+
+```
+<br>
+
+#### 5): Checking if the MCMC chains converge
+<br>
+
+```{r warning=FALSE}
+print(jags.mod.fit)
+```
+
+<br>
+
+```{r warning=FALSE}
+jagsfit.mcmc <- as.mcmc(jags.mod.fit)
+MCMCtrace(jagsfit.mcmc,type ='trace', ind = TRUE, pdf = FALSE)
+```
+<br>
+Looking that these trace plots, all of the parameters appear to be randomly scattered around central stable mean values, with the only exception being the sigma alpha plot, which appears to be slightly less centered than the other plots but both chains have mixed well, suggesting the variance is well estimated. The trace plots mixing and converging shows that the parameters are well estimated and the model is an overall good fit for the data.  
+
+
+<br>
+```{r warning=FALSE}
+gelman.diag(jagsfit.mcmc)
+```
+<br>
+The Gelman Diagnostic compares the variance within chains to the variance between the chains to check if the chains converge well. The upper confidence interval values given are all between 1.00 and 1.10, so again supporting the conclusion that the MCMC chains have converged correctly. The Multivariate psrf value being 1.01 supports the conclusion that the chains have mixed well as it is very close to 1, therefore overall given the trace plots and the gelman diagnostic the chains have proven to mix and converge well.
+
+
+<br>
+
+
+#### 6): Conclusions About the Reaction Times of Schizophrenic and Non-Schizophrenic people
+
+<br>
+```{r warning=FALSE}
+MCMCtrace(jagsfit.mcmc,
+          params=c("beta", "tau", "lambda"),
+          type ='density',
+          ind = TRUE, ISB = FALSE,
+          exact=FALSE,pdf = FALSE)
+```
+
+<br>
+
+```{r warning=FALSE}
+# Viewing the summary of the model
+summary_exp <- summary(jagsfit.mcmc)
+summary_exp
+
+```
+<br><br>
+Since the reaction times were logged originally, in order to compare reaction times between the schizophrenic and non-schizophrenic people the exponential transformation needs to be applied to them again. Which results in the following values:
+<br>
+
+```{r warning=FALSE}
+# Apply exponential transformation to means and quantiles
+summary_exp$statistics <- exp(summary_exp$statistics)
+summary_exp$quantiles <- exp(summary_exp$quantiles)
+summary_exp$quantiles
+
+```
+<br>
+
+```{r warning=FALSE}
+
+
+# Create a data frame for mu, tau, and beta only
+summary_table <- data.frame(
+  Parameter = c("lambda", "tau", "beta"),
+  `2.5%` = summary_exp$quantiles[c("lambda", "tau", "beta"), "2.5%"],
+  `50%` = summary_exp$quantiles[c("lambda", "tau", "beta"), "50%"],
+  `97.5%` = summary_exp$quantiles[c("lambda", "tau", "beta"), "97.5%"]
+)
+
+# Generate a formatted table using knitr and kableExtra
+summary_table %>%
+  kable(
+    format = "html",  # Use "latex" if knitting to PDF
+    align = 'c'
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+    full_width = F
+  )
+
+```
+<br>
+From this, the $\lambda$ represents the probability of schizophrenic people having a delayed reaction time, and the mean being 1.13 indicates that it is very likely that a schizophrenic person will have a delay in their reaction time. The 95% confidence interval for $\lambda$ is also tight around the mean, suggesting that this delayed effect is consistent for the schizophrenic people. Then $\tau$ is the additional time delay in the schizophrenic people's reaction times, with the mean being 2.34, it shows that the schizophrenic people have a 2.34 times longer delay in reaction time compared to the non-schizophrenic group. The 95% confidence interval is also fairly close around the mean, further showing that the delay is consistent across the board between the two different groups. Then lastly and most importantly the mean value for $\beta$ is 1.38, meaning the reaction times for schizophrenic people is on average 38% slower than that for a non-schizophrenic person. Therefore, overall having schizophrenia leads to not only an increased chance in having a delayed reaction time, a longer delay but also just the reaction time itself.
+
+<br>
+
+#### 7): Fitting the JAGS model
+##### a):
+
+<br>
+```{r warning=FALSE}
+# Adding 30 empty values to the y.s schizophrenic values
+
+y.s22 = t(apply(rtimes_log[, 12:17], 2, function(x) c(x, rep(NA, 30))))
+
+print(y.s22)
+```
+
+<br>
+
+```{r warning=FALSE}
+
+jags.mod <- function(){
+  # Reaction time of non-schizophrenics
+  for(i in 1:11){
+    for(j in 1:30){
+      y.ns[i,j] ~ dnorm(alpha.ns[i], p.y)
+    }
+    alpha.ns[i] ~ dnorm(mu,p.alpha)
+  }
+  # Reaction time for schizophrenics
+  for(i in 1:6){
+    for(j in 1:60){
+      z[i,j] ~ dbern(lambda)
+      y.s2[i,j] ~ dnorm(alpha.s[i] + tau * z[i,j], p.y)  
+    }
+    alpha.s[i] ~ dnorm(mu + beta, p.alpha)
+  }
+  # Priors
+  mu ~ dunif(-10, 10)
+  sigma_y ~ dunif(0, 10)
+  sigma_alpha ~ dunif(0, 10)
+  beta ~ dunif(-10, 10)  
+  tau ~ dunif(0, 10)  
+  lambda ~ dunif(0, 1)
+  p.y <- 1 / sigma_y
+  p.alpha <- 1 / sigma_alpha 
+}
+```
+<br>
+
+##### b):
+
+```{r warning=FALSE}
+
+jags.mod <- function(){
+  # Reaction time of non-schizophrenics
+  for(i in 1:11){
+    for(j in 1:30){
+      y.ns[i,j] ~ dnorm(alpha.ns[i], p.y)
+    }
+    alpha.ns[i] ~ dnorm(mu,p.alpha)
+  }
+  # Reaction time for schizophrenics
+  for(i in 1:6){
+    for(j in 1:60){
+      z[i,j] ~ dbern(lambda)
+      y.s22[i,j] ~ dnorm(alpha.s[i] + tau * z[i,j], p.y)  
+    }
+    alpha.s[i] ~ dnorm(mu + beta, p.alpha)
+    pred_sd[i] = sd(y.s22[i, 31:60])
+  }
+  min_sd <- min(pred_sd)
+  max_sd <- max(pred_sd)
+  # Priors
+  mu ~ dunif(-10, 10)
+  sigma_y ~ dunif(0, 10)
+  sigma_alpha ~ dunif(0, 10)
+  beta ~ dunif(-10, 10)  
+  tau ~ dunif(0, 10)  
+  lambda ~ dunif(0, 1)
+  p.y <- 1 / sigma_y
+  p.alpha <- 1 / sigma_alpha 
+}
+
+# Data
+jags.data <- list('y.ns' =y.ns, 'y.s22' =y.s22)
+
+# parameters we want to monitor
+jags.param <- c("min_sd", "max_sd")
+
+# Specifying initial values
+initial.1 <- list(mu = 5.72, beta = 0.42, tau = 0.77, sigma_y = 0.35, sigma_alpha = 0.26, lambda = 0.58, y.s2 = t(apply(rtimes_log[, 12:17], 2, function(x) {c(rep(NA, 30), rnorm(30, mean = 6, sd = 1))})))
+
+initial.2 <- list(mu = 6.6, beta = 0.68, tau = 0.4, sigma_y = 0.52, sigma_alpha = 0.4, lambda = 0.32, y.s2 = t(apply(rtimes_log[, 12:17], 2, function(x) {c(rep(NA, 30), rnorm(30, mean = 6, sd = 1))})))
+
+jags.init <- list(initial.1, initial.2)
+
+```
+
+
+##### c):
+<br>
+```{r warning=FALSE}
+library(R2jags)
+jags.mod.fit <- jags(data = jags.data, inits = jags.init,
+                    parameters.to.save = jags.param,
+                    n.iter = 6000, n.burnin = 5000, n.chain = 2, model.file = jags.mod)
+
+print(jags.mod.fit)
+```
+<br>
+
+##### d): 
+
+```{r warning=FALSE}
+
+print(jags.mod.fit)
+
+# Extract Smin and Smax from the JAGS output
+min_sd <- as.numeric(jags.mod.fit$BUGSoutput$sims.list$min_sd)
+max_sd <- as.numeric(jags.mod.fit$BUGSoutput$sims.list$max_sd)
+
+minmax <- data.frame(min_sd, max_sd)
+
+minmax
+
+ggplot(minmax, aes(x = min_sd, y = max_sd)) +
+  geom_point(color = "black") +  # Add points
+  labs(title = "Minmum vs Maximum Standard Deviation",
+       x = "Minimum Standard Deviation",
+       y = "Maximum Standard Deviation") +
+  theme_minimal()
+
+```
+
+```{r warning=FALSE}
+# Get raw min and max from the original data
+raw_min <- min(apply(rtimes_log, 2, sd, na.rm = TRUE))
+raw_max <- max(apply(rtimes_log, 2, sd, na.rm = TRUE))
+
+# Add raw values from question 2 on to the plot
+ggplot(minmax, aes(x = min_sd, y = max_sd)) +
+  geom_point(color = "black") +
+  geom_point(aes(x = raw_min, y = raw_max), color = "red", size = 3) +  
+  labs(title = "Minmum vs Maximum Standard Deviation",
+       x = "Minimum Standard Deviation",
+       y = "Maximum Standard Deviation") +
+  theme_minimal()
+```
+
+
+<br><br><br>
+
+## Section B)
+<br>
+
+#### 1): 
+
+```{r include=FALSE, warning=FALSE}
+library(readr)
+read.csv("~/Downloads/Classification.csv")
+class <- read.csv("~/Downloads/Classification.csv")
+class
+```
+
+
+Plotting the raw classification data gives:
+```{r warning=FALSE, echo=FALSE}
+library(ggplot2)
+
+# Plotting the classification data with correct color scheme and style
+ggplot(class, aes(x = X1, y = X2, color = as.factor(Group))) +
+  geom_point(size = 1) +  # Larger points and slight transparency
+  scale_color_manual(values = c("#F8766D", "#00BFC4")) +  # Red and teal colors
+  labs(
+    title = "Classification",
+    x = "X1",
+    y = "X2",
+    color = "Group"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "right",         # Keep legend on the right
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),  # Title formatting
+    axis.title = element_text(size = 12)  # Axis label formatting
+  )
+```
+<br>
+
+
+```{r warning=FALSE}
+
+class$Group <- as.factor(class$Group)
+
+# Summary statistics for each group
+summary_stats <- class %>%
+  group_by(Group) %>%
+  summarise(
+    mean_x1 = mean(X1),
+    std_x1 = sd(X1),
+    min_x1 = min(X1),
+    max_x1 = max(X1),
+    mean_x2 = mean(X2),
+    std_x2 = sd(X2),
+    min_x2 = min(X2),
+    max_x2 = max(X2)
+  )
+
+# Correlation between X1 and X2 for each group
+correlation_group_0 <- cor(class[class$Group == 0, c("X1", "X2")])
+correlation_group_1 <- cor(class[class$Group == 1, c("X1", "X2")])
+
+```
+<br>
+
+```{r warning=FALSE, echo=FALSE}
+library(kableExtra)
+
+# Creating tables for the meaningful stats, and the correlation coeficients
+summary_stats %>%
+  kable("html", caption = "Meaningful Summary Statistics") %>%
+  kable_styling(full_width = FALSE)
+
+
+```
+
+<br>
+
+Overall group 0, appears to follow a quadratic boundary, centered around 0. Group 0 has a positive mean for 'X1' values and then a negative  mean for 'X2', while the opposite is true for group 1. Which, is shown in the classification plot, where the two groups are clearly separated, with a slight overlap around the decision boundary. The standard deviation of the points in group 0 are lower for both the 'X1' and 'X2' data points of 0.54 and 0.89 respectively for group 0 and then 1.11 and 0.93 for group 1. Despite both points being lower, for group 0 the 'X1' data has a significantly lower standard deviation, resulting in a higher variance in the data in group 1. 
+<br>
+Overall the spread of the data within group 0 is significantly lower than the spread within group 1. By using the minimum and maximum values given the range of the data can be calculated and within group 0 the range is roughly 2.7 for 'X1' and roughly 5.2 for 'X2', whereas the ranges in group 1 are 6.3 for 'X1' and then 7.3 for 'X2'. This large spread suggests that the linear discriminant analysis would be unsuitable for classification as the data does not follow a simple linear relationship. 
+
+<br>
+- **Quadratic discriminant analysis: ** is a lot more flexible than Linear Discriminant Analysis, thus making it more likely to be a better fit, as well as this, visually looking at the classification data group 0 appears to follow a slightly quadratic decision boundary, with slight noise around the edges, again suggesting that the QDA method could be useful for classifying the data. 
+
+<br>
+- **K-nearest neighbour classification: ** could be a good fit for the data as it is a flexible approach to the Bayes classifier, since the two group do appear to follow a distinct shape the KNN should be able to capture the shape of the data. However since there is noise within the data, as both groups do have some overlap the KNN classification may not be the most suitable, despite this choosing the most appropriate value for k will determine how reliable this method is.  
+
+<br>
+- **Support vector machines: ** are mainly used for binary classification problems, such as this. The SVM produced a non-linear decision boundary, and therefore could be applied to this data set in order to accurately classify it, using the radial kernel. 
+
+<br>
+- **Random forests: ** could also be a good model to classify the data with, as it is a decision tree based model, which is highly flexable and also able to work well with complex data patters, which could be useful for this data, given the large amount of noise and overlap on the decision boundary. 
+
+
+#### 2): Separating the Test and Training Data Sets
+
+<br><br>
+```{r warning=FALSE}
+
+# Splitting the data into the 75% training set and the 25% test/evaluation set
+
+# Code from https://stackoverflow.com/questions/17200114/how-to-split-data-into-training-testing-sets-using-sample-function
+
+class$X <- 1:nrow(class)
+train <- class %>% dplyr::sample_frac(.75)
+test  <- dplyr::anti_join(class, train, by = 'X')
+
+```
+
+<br>
+
+#### 3): Fitting the Classification Models
+<br>
+The linear Discriminant Analysis (LDA) was deemed to be the least appropriate method to classify the data with, as both groups within the data clearly show a non-linear complex structure which the other methods are more suited to classifying, so the other four methods have been chosen.
+
+<br>
+
+##### **- Fitting the QDA**
+
+<br>
+Starting with the Quadratic discriminant analysis classification method, which works the same way as the linear discriminant analysis, with the difference being it estimates separate variance and covariance for each class, which caused a quadratic decision boundary. An assumption of QDA's is that the each class is normally distributed, but the covariant matricies between the classes is allowed to be different. Under these assumptions the QDA assigns an observation to the class. Where the discriminant functions are quadratic which results in the quadratic decision boundary, which is calculated through Baye's theorem, aligning with the observed classification data. 
+
+<br>
+QDA also works best when the variance between the classes are different, and as seen in part 1, the variance of group 1 is significantly higher than the variances for group 0. 
+
+
+```{r warning=FALSE}
+# Code help for this was found at: https://www.statology.org/quadratic-discriminant-analysis-in-r/
+
+library(e1071)
+library(caret)
+library(MASS)
+set.seed(256)
+
+# Fitting the QDA model
+fit.qda <- qda(Group~., data=train)
+qda.predict <- predict(fit.qda, test)
+
+confusionMatrix(qda.predict$class,as.factor(test$Group))
+
+
+```
+<br>
+As seen in the confusion matrix the accuracy is 82.8%, with a sensitivity of 0.62 and specificity of 0.92. Where the sensitivity is the measure of how well the model detects positive cases, in this case it is how well the model detects if the data is group 0. Then the specificity is the measure of how well the model detects negative cases so in this case how well the model detects if the data is group 1. 
+
+
+
+<br>
+
+##### **- Fitting the KNN**
+<br>
+Despite the apparent quadratic nature of the data, this model can clearly be approved upon. The K-Nearest Neighbour approach, is non-parametric and therefore has no prior assumptions about the shape of the data , as a result the KNN approach is much more flexible, therefore should be a better fit for the data. The data is classified according to the points surrounding it, so the data is more likely to be in a class similar to the points surrounding it. Where the value k in the model is the number of points surrounding the point being classified are considered. A lower k value can lead to the model being over fitted, and the opposite is true is a high value of k is chosen as the data could then become under fitted. 
+
+<br>
+As a result the value chosen for k is very important to the fit of the model, as the best value of k will be the value with the best accuracy when predicting the value of the points and also a good ratio between the sensitivity and specificity. Once the k value has been selected, for each point in the data set the distance between the test point and the k number of training data point is calculated. The majority vote from the k training data points is then the class given to the test point. 
+
+
+<br>
+```{r warning=FALSE}
+library(class)
+set.seed(256)
+
+i <- createDataPartition(class$Group, p = 0.7, list = FALSE)
+
+# split the data using the indices returned by the createDataPartition function
+xTrain <- class[i, c("X1", "X2")] 
+yTrain <- class[i, "Group"] 
+xTest <- class[-i, c("X1", "X2")]
+yTest <- class[-i, "Group"]
+
+# Fitting the KNN model
+fit.knn = knn(train=xTrain,test=xTest,cl=yTrain,k=3)
+
+confusionMatrix(fit.knn,yTest)
+
+```
+<br>
+
+The k chosen here was just arbitrary and chosen as 3 for an initial model test. Using this initial value for k, gives the approach an accuracy of 80.3%, so therefore is performing worse than the QDA approach, so to improve the model a more optimal value for k will need to be used. To find the optimal number to use for k the following code is used, where it tests the model with every k form 2-50 and returns the k with the highest accuracy for predicting the model:
+
+<br>
+```{r warning=FALSE, include=FALSE}
+# Finding the optimal k value
+set.seed(256)
+
+opts <- trainControl(method='repeatedcv', number=10, repeats=5)
+# Find optimal k value and return it
+mdl <- train(x=xTrain, y=yTrain,
+            method='knn', 
+            trControl=opts, 
+            tuneGrid=data.frame(k=seq(2, 50)))
+print(mdl) 
+
+
+```
+<br>
+
+The given optimal value for k is 31, so refitting the KNN model using k=31 should give a better fit for the data as the lower initial value for k lead to the data being over fitted, the updated code for this gives:
+
+<br>
+
+```{r warning=FALSE}
+set.seed(256)
+# Fitting the KNN model
+fit.knn = knn(train=xTrain,test=xTest,cl=yTrain,k=31)
+
+confusionMatrix(fit.knn,yTest)
+
+```
+<br>
+When the value of k was given as 3 the accuracy of the classification was 79.6% which is better than the QDA model fit, however after the value of k has been optimised  the accuracy of the classification increased to 82.6%, which is significantly better than the QDA approach, due to the increased flexibility of the KNN's shapeless approach. The sensitivity and specificity have also both increased with the improved k value, from 0.64 to 0.65 and 0.87 and 0.91 respectively. Also looking at the confusion matrix between the two iterations of the method show that group 0 was less accurately predicted than group 1 as 
+
+The Kappa value for this method has also increased, where Kappa is the strength of agreement between predicted and actual values. so therefore the model is making more meaningful predictions when the k was optomised and therefore increased. 
+
+<br>
+
+##### **- Fitting the SVM**
+<br>
+The Support Vector Machine (SVM) approach is mainly used in binary classification systems, and therefore could be an appropriate method to classify this data set. Support vector machines are a margin based classifier that transforms the predictors and find the optimal hyperplane within the data, where the surrounding data points are evenly spread around the boundary, therefore is good at classifying data with a complex decision boundary, as the hyperplane is then used to classify new points. 
+
+<br>
+Since the data is non linear, multiple different kernels will be tested to see if any other methods give a better fit to the data. Initially testing the svmLinear kernel gives:
+
+<br>
+```{r warning=FALSE}
+set.seed(256)
+fit.svm <- train(x=xTrain,y=yTrain, method='svmLinear') 
+
+# Test model on testing data
+yTestPred <- predict(fit.svm, newdata=xTest)
+
+confusionMatrix(yTestPred, yTest)
+```
+<br>
+With an accuracy of 75.6%, the linear method as expected does not classify the data as well as the other methods could. Despite the specificity being quite high the sensitivity is very low compared to the QDA and KNN. This method also gave a lower Kappa value of 0.35. 
+
+<br>
+Since the data is non-linear another SVM method that could potentially fit the data better could be the polynomial approach. Which gives a confusion matrix of:
+
+<br>
+```{r warning=FALSE}
+set.seed(256)
+fit.svm <- train(x=xTrain,y=yTrain, method='svmPoly') 
+
+# Test model on testing data
+yTestPred <- predict(fit.svm, newdata=xTest)
+
+confusionMatrix(yTestPred, yTest)
+```
+<br>
+The polynomial approach has significantly improved the SVM already, bringing the accuracy up to 82.2%. The sensitivity has significantly increased up to 0.62, whereas the specificity has decreased slightly down to 0.92 despite this the model has a good balance between predicting both group 0 and group 1 based on the high values for both sensitivity and specificty.
+<br>
+
+Due to the non-linearity of the data another SVM method the radial method will be tested to see if it predicts the data better. Fitting the SVM Radial method gives:
+
+
+<br>
+```{r warning=FALSE}
+set.seed(256)
+fit.svm <- train(x=xTrain,y=yTrain, method='svmRadial') 
+
+# Test model on testing data
+yTestPred <- predict(fit.svm, newdata=xTest)
+
+confusionMatrix(yTestPred, yTest)
+```
+<br>
+
+The accuracy of the radial method is slightly worse than the polynomial, with an identical specificity and slightly worse sensitivity. However the radial method should fit the shape of the data better so the radial method will be optomised to see if that can increase its accuracy and fit. 
+
+<br>
+```{r warning=FALSE}
+# Used Gen AI to bug fix
+# Optomising the radial
+set.seed(256)
+mdl.rad <- train(x=xTrain,y=as.factor(yTrain), 
+             method = "svmRadial",
+             trControl = trainControl("cv", number = 5),
+             tuneGrid = expand.grid(C = seq(0, 4, length = 20), sigma=0.9))
+
+
+# Plot model accuracy vs different values of Cost
+plot(mdl.rad)
+
+```
+
+
+```{r warning=FALSE}
+# Print the best tuning parameter C that maximises model accuracy
+mdl.rad$bestTune
+```
+
+The optomised radial method produces a C value of 0.63, the C value handles the balance between maintaining a low error with the predictions, while also keeping the decision boundary relatively simple. 
+
+<br>
+```{r warning=FALSE}
+set.seed(256)
+fit.svm <- train(x=xTrain,y=yTrain, method='svmRadial') 
+
+# Test model on testing data
+yTestPred <- predict(mdl.rad, newdata=xTest)
+
+confusionMatrix(yTestPred, yTest)
+```
+<br>
+The optomised radial method has improved the accuracy of the predictions as it is now 82.3%, with the sensitivity at 0.62 and specificity at 0.92. Indicating that this model is good at predicting both group 0 and group 1 cases. However, the optomised radial method produces the same acurracy, sensitivity and specificity as the polynomial method. Therefore both could be appropriate as classifying the data.
+
+<br>
+
+##### **- Fitting the Random Forrest**
+<br>
+Random Forrest is a decision tree based classification by combining multiple decision trees in order to mitigate the the over fitting from decision trees. A number of decision trees are created using the training set and each time a split in a tree is considered, a random sample of predictors is chosen as split candidates from the predictors. The predictions from each of the decision trees is then aggregated to classify the new points, by a majority vote. 
+
+<br>
+Due to the majority vote across the multiple decision trees, the random forest approach is useful for complex data such as this and reduces the risk of the data being over fitted. Specifically because it works well when the data has a lot of noise and overlap between variables, again such as the 'X1' and 'X2' clusters. To ensure that the data is not over fitted a large number of decision trees are used to give a more accurate average, in this model 200 decision trees have been used to predict the data. 
+
+
+<br>
+```{r warning=FALSE}
+library(randomForest)
+# Fit Random Forest model
+set.seed(256) 
+fit.rf <- train(x=xTrain, y=yTrain,
+             method='rf',
+             ntree=200, 
+             tuneGrid=data.frame(mtry=2))
+
+yTestPred <- predict(fit.rf, newdata=xTest) 
+confusionMatrix(yTestPred, yTest)
+
+```
+<br>
+
+With an accuracy of 80.3% the random forest method appears to predict the data fairly well, and with the sensitivity of 0.6 and specificity of 0.9 the model has a good balance between predicting both group 0 and group 1.
+
+#### 4):Comparing the models
+
+<br>
+
+Overall, the QDA produced the confusion matrix with the highest accuracy at predicting the correct groups at 82.8%. Although it had the highest overall accuracy, the KNN approach had to highest sensitivity value of 0.65, meaning that in terms of classifying data points belonging to group 0 then the KNN approach would be the most appropriate, the main drawback with the KNN approach, where in this case a value of 31 was chosen and used for the classifying, was that the specificity was not as high as other methods, such as the QDA and SVM radial and polynomial. Leading to the group 1 points being incorrectly predicted more than other methods, and since the group 1 data points had a much larger spread of values within the data set, this could lead to a noisier decision boundary. 
+
+<br>
+
+Therefore based on the confusion matricies produced and the values calculated, the best method for classifying this data is the k-nearest neighbour approach. Providing a good balance between classifying both group 0 and group 1 points evently, while also maintaining a high accuracy overall just below the QDA method. 
+
+

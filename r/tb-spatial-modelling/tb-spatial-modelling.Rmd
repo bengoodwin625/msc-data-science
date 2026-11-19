@@ -1,0 +1,681 @@
+---
+title: "Theo 2"
+output: html_document
+date: "2025-03-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include=FALSE, warning=FALSE}
+library(readr)
+tb <- load("~/Downloads/datasets_project.RData")
+
+TBdata$tb_rate <- (TBdata$TB / TBdata$Population)*100000
+```
+
+```{r warning=FALSE, echo=FALSE, include=FALSE}
+# Loading packages
+library(fields)
+library(maps)
+library(sp)
+library(MASS)
+library(mgcv)
+library(gridExtra)
+library(grid)
+library(ggplotify)
+library(gridGraphics)
+library(mgcv)
+library(ggplot2)
+library(dplyr)
+library(gt)
+library(tibble)
+library(patchwork)
+library(cowplot)
+library(ggridges)
+library(viridis)
+library(hrbrthemes)
+library(broom)
+library(scales)
+
+```
+<br><br>
+
+
+AI-supported/AI-integrated use is permitted in this assessment. I acknowledge the following uses of GenAI tools in this assessment:
+<br>
+ -I have used GenAI tools to help me understand key theories and concepts.
+<br>
+ -I have used GenAI tools to suggest a plan or structure for my assessment.
+<br> 
+ -I have used GenAI tools to give me feedback on a draft.
+<br> 
+ -I have used GenAI to assist in formatting and bug fixing code
+<br><br>
+
+
+**Appendices**
+
+**Plots:**
+<br>
+- *C*: GAM model
+<br>
+- *D*: GAM Residuals
+<br>
+- *F*: Poverty vs Significantly Impactful Variables
+<br>
+- *G*: Predicted Spatial Heat Map
+<br>
+- *I*: Predicted Temporal Cases 
+<br>
+- *J*: Predicted Spatial-Temporal Regional Map
+<br>
+
+
+**Tables:**
+<br>
+-*A*: Co variate Summaries
+<br>
+-*E*: Effective Impact of each Co variate
+<br>
+-*H*: Most Affected Regions
+
+**Model:**
+-*B*: The GAM model
+
+<br><br><br>
+The 3 pages of text analysis:
+
+In Brazil Tuberculosis (TB) causes a serious health concern, the data provided contains TB data across Brazil while also highlighting key covariant variables within different regions, such as poverty, urbanisation and unemployment rate. A negative binomial Generalised Added model (GAM) is fitted to the data as they are used to capture complex non-linear relationships while combating overdispersion within the count data.  Smoothing functions are using within the defined GAM to capture these non-linear complex relationships without the need to include extra quadratic and cubic terms into the model. The smoothing terms were chosen so that they represent a good balance between have a good wellness of fit without overfitting the data, to improve the accuracy of predictions made. 
+
+The impact of each socio-economic covariant has on the number of TB cases if investigated, along with how each co variate interacts with each other and their combined effect on the number of TB cases and the predicted rate of TB cases. Then the spatial, temporal and finally spatial-temporal effects on the number of TB cases will also be assessed, resulting in a clear strategy for resource allocation within Brazil to combat the TB problem across the country. 
+
+As mentioned, the model chosen is a negative binomial GAM model, iterating the number of TB cases, while considering several socio-economic covariate factors that can affect the rate of TB cases.  The model is defined in [Appendix B]. A k, smoothing value, of 9 is chosen for most of the covariates, this was chosen as it provided a good balance between a good wellness of fit while also preventing the data from being overfitted, which could have affected the predicted values. The effectiveness of the k values is shown by the respective Effective Degrees of Freedom (EDF), derived from the number of parameters minus the number of constraints, where the aim is to have an EDF value close to the number of splines but with a small difference so that the model does not over fit the data resulting in inaccurate future predictions. Other than that, a k value of 3 is chosen for year and 300 for the longitude and latitude, these were chosen because there are only 3 years that data is recorded for, so we are limited, and then for location a higher number of planes increases the smoothness and accuracy of spatial data predictions. The model is given by:
+
+
+<br>
+
+$$
+Y_i \sim \text{N}(\mu_i, \theta) 
+$$
+
+<br>
+$$
+\begin{align}
+\log(\mu_i) &= \beta_0 + s_1(\text{Indigenous}_i, k=9) + s_2(\text{Illiteracy}_i, k=9) + s_3(\text{Urbanisation}_i, k=9) + s_4(\text{Density}_i, k=9) + \\
+& \quad s_5(\text{Poverty}_i, k=9) + s_6(\text{Poor Sanitation}_i, k=9) + s_7(\text{Unemployment}_i, k=9) + \\
+& \quad s_8(\text{Timeliness}_i, k=9) + s_9(\text{Year}_i, k=3) + s_{10}(\text{lon}_i, \text{lat}_i, k=300)
+\end{align}
+$$
+
+<br>
+
+
+Where the log link function is there to exponentiate the linear predictors, so that all the outcomes are positive. And by offsetting the data by the log of the population the data within the dataset is scaled according to the population of its region, ensuring that the high and low populated areas are reflected proportionally based off predicted rates rather than raw predicted counts, so meaningful comparisons can be made about the risk of TB in each area separately and therefore more meaningful resource allocation. 
+
+[Appendix C] Shows the estimated smoothing effects for each of the covariates based on the predicted TB rate. Where the estimated TB rate is plotting against the covariate value, with the respective 95% confidence interval representing the uncertainty in the predictions for each. Where the larger the confidence interval the greater the uncertainty in the predictions, as displayed on the plot as the proportion on indigenous people increases so does the predicted number of TB cases, but due to the very large confidence interval increasing the predictions are not as reliable, potentially due to a smaller pool of information about regions with a high indigenous proportion, due to this uncertainty making concrete conclusions about how that factor affects TB cases across Brazil could be more complicated than other covariate factors. Poverty, poor sanitation, unemployment and urbanisation appear to have a more complex relationship and will therefore be investigated further, to fully understand how they interact with the predicted number of TB cases, so the authorities are aware of the most at risk groups with Brazil. 
+
+Then [Appendix D] plots the QQ plot of the deviance residuals and then also the deviance residuals vs fitted, these plots highlight the model’s effectiveness at capturing the structures present within the data and show how well the smoothing terms are accurately predict the trend within the model. The QQ plot, plots the deviance residuals against an ideal generated theoretical quantile, with the figure showing a very well-fitting relationship of the residuals sitting almost entirely on the ideal normally distributed red line. The following deviance residuals vs fitting plot shows any non-linear relationship between the predictors and the outcomes. The plot shown again highlights the model’s ability to capture the non-linearity within the data and the residuals are evenly distributed around zero with the majority of the points been very clustered close to the zero line, meaning the covariate smoothing terms have done their job effectively. The residuals produced for the negative binomial were significantly better than the other distributions tested, so was ultimately used in the final model. Given the residuals it is clear that the defined negative binomial GAM is well suited to predict values within the data and therefore make conclusions about the spatial and temporal impact on the number of TB cases, adjusted for the multiple socio-economic covariates. 
+
+Using the chi squared value and the square root of the EDF value for each of the socio-economic covariates respectively an effective size value can be calculated, which indicates how significantly the covariate factor affects the number of TB cases, with the larger numbers representing a larger impact. The effective sizes for the covariates within this data are shown in [Appendix E], with the longitude and latitude term having a significantly large impact on the number of TB cases, whereas the year, the illiteracy rate and the proportion of indigenous people do not have a significant impact on the TB cases as shown by their p values being above 0.05. In order to explore the relationship between the covariates a bubble plot is created, showing how the number of TB cases changes with respect to poverty and then three other covariate factors: urbanisation, sanitation and unemployment.
+
+[Appendix F] shows this relationship, where the size of the bubble represents the associated number of TB cases and the colour represents the model’s predicted TB rate, with the higher rates being represented by a lighter colour and the darker points represent lower rates. The plot is also divided up by year showing how the relationship changes between 2012, 2013 and 2014. For the poverty vs urbanisation section, it is clear that high urbanisation leads to significantly more TB cases, even if the poverty is low. Despite this the top half of the bubbles shown where the urbanisation is higher for all levels of poverty the predicted rate of TB cases remains higher, even though the areas with higher poverty tend to have less urbanisation, highlighting that higher poverty leads to an increase in TB cases even in more rural areas and that areas with a lower poverty level in highly urbanised areas are at the least risk of getting TB. Likely due to an increased access to good healthcare and the ability to afford better medical treatment. The next section on the plot shows the relationship between poverty and poor sanitation. Based on the plot it appears that the bubbles form two clumps, one where sanitation is good and poverty is low and also where poverty is higher and sanitation is worse. As shown by the colour grading of the bubbles a high number of TB case can be found where sanitation is relatively good, this could be because high populated areas are likely to have better sanitation and are disproportionately represented. There is however a higher rate of TB cases predicted when poverty is high as well as the region having poor sanitation compared to the rest of Brazil, which is what would be expected as they have less access to healthcare as well as previously mentioned those areas are most likely to be more rural which could explain the lower sanitation levels. Although the change is minimal between the years the overall poverty appears to have slightly decreased at similar levels of poor sanitation, perhaps giving insight into why the overall number of TB cases across Brazil decreased between 2012 to 2014. The final section of the plot shows the relationship between poverty and the level of unemployment within the area. As expected, the level of poverty increases with the level of unemployment, however once the level of poverty exceeds 60 within the area the level of unemployment then reduces again. The model predicts the rate of TB cases to be higher with increased unemployment across the whole range of poverty levels, with the highest predicted rates at high levels of unemployment and poverty. This is potentially due to lack of ability to fund medical care and due to an increased likelihood of those regions being in more rural areas. Therefore, the best use of resources would be to fund areas with high poverty, prioritising areas with low sanitation and high unemployment as those have the strongest effect onto the number of predicted TB cases across Brazil.
+
+The specific areas to focus on allocating resources are shown by the brighter areas on the plot in [Appendix G], the colour gradient goes from white to red, where the pure white areas are the areas with the greatest precited TB rate risk so those areas should be targeted first, with a priority for areas with a high risk in rural areas. The following [Appendix H] then gives the numbers associated with the highest risk regions within Brazil, showing that the number of high-risk regions has decreased in 2014 from 53 to 44, but the highest risk regions have remained the same for the three years so should receive the support as a priority. To support the information that the number of cases has decreased from 2012 to 2014 even if thought it’s a very slight change [Appendix I] plots the predicted number of TB cases for each year in the data, the resulting figure highlights the slight change year on year as the number of cases is decreasing over time. Then lastly [Appendix J] plots the maps of Brazil, with the spatial and temporal data represented by the predicted TB risk for each of the years for each of the respective regions. The figure once again shows that the predicted TB rate decreases over time, most likely due to medical advances improving diagnosis as well as treatment the plot also again shows the highest risk areas for the authorities.
+
+Overall the negative binomial GAM model created, accurately predicts and models the data about the number of TB cases in Brazil, with a number of associated socio-economic covariate factors, as shown by the predictor plot which highlights the smoothing terms doing their jobs effectively and then the QQ residual plots once again showing how the model is able to predict the non-linearity of the data and how the data follows a normal distribution. The model shows that the areas the authorities should prioritise are rural areas with high rates of poverty, high unemployment and poorer quality of sanitation as these areas are most of risk of a TB outbreak due to lack of medical advancements. 
+
+
+
+ 
+
+<br><br>
+
+
+
+### **Appendix A**
+<br>
+```{r warning=FALSE}
+
+summary_table <- data.frame(
+  Variable = c(
+    "Indigenous", "Illiteracy", "Urbanisation", "Density", 
+    "Poverty", "Poor_Sanitation", "Unemployment", "Timeliness"
+  ),
+  Mean = c(
+    mean(TBdata$Indigenous, na.rm = TRUE),
+    mean(TBdata$Illiteracy, na.rm = TRUE),
+    mean(TBdata$Urbanisation, na.rm = TRUE),
+    mean(TBdata$Density, na.rm = TRUE),
+    mean(TBdata$Poverty, na.rm = TRUE),
+    mean(TBdata$Poor_Sanitation, na.rm = TRUE),
+    mean(TBdata$Unemployment, na.rm = TRUE),
+    mean(TBdata$Timeliness, na.rm = TRUE)
+  ),
+  Min = c(
+    min(TBdata$Indigenous, na.rm = TRUE),
+    min(TBdata$Illiteracy, na.rm = TRUE),
+    min(TBdata$Urbanisation, na.rm = TRUE),
+    min(TBdata$Density, na.rm = TRUE),
+    min(TBdata$Poverty, na.rm = TRUE),
+    min(TBdata$Poor_Sanitation, na.rm = TRUE),
+    min(TBdata$Unemployment, na.rm = TRUE),
+    min(TBdata$Timeliness, na.rm = TRUE)
+  ),
+  Max = c(
+    max(TBdata$Indigenous, na.rm = TRUE),
+    max(TBdata$Illiteracy, na.rm = TRUE),
+    max(TBdata$Urbanisation, na.rm = TRUE),
+    max(TBdata$Density, na.rm = TRUE),
+    max(TBdata$Poverty, na.rm = TRUE),
+    max(TBdata$Poor_Sanitation, na.rm = TRUE),
+    max(TBdata$Unemployment, na.rm = TRUE),
+    max(TBdata$Timeliness, na.rm = TRUE)
+  ),
+  SD = c(
+    sd(TBdata$Indigenous, na.rm = TRUE),
+    sd(TBdata$Illiteracy, na.rm = TRUE),
+    sd(TBdata$Urbanisation, na.rm = TRUE),
+    sd(TBdata$Density, na.rm = TRUE),
+    sd(TBdata$Poverty, na.rm = TRUE),
+    sd(TBdata$Poor_Sanitation, na.rm = TRUE),
+    sd(TBdata$Unemployment, na.rm = TRUE),
+    sd(TBdata$Timeliness, na.rm = TRUE)
+  )
+)
+
+# Creating the GT table
+summary_table %>%
+  gt() %>%
+  tab_header(
+    title = "Summary Statistics for Covariates"
+  ) %>%
+  fmt_number(
+    columns = c("Mean", "Min", "Max", "SD"),
+    decimals = 2
+  ) %>%
+  cols_label(
+    Variable = "Covariate",
+    Mean = "Mean",
+    Min = "Min",
+    Max = "Max",
+    SD = "SD"
+  ) %>%
+  tab_options(
+    table.font.size = 12
+  )
+
+
+```
+
+### **Appendix B**
+<br>
+```{r warning=FALSE, cache=TRUE}
+
+
+model_nb <- gam(TB ~ s(Indigenous, k=9) + s(Illiteracy, k=9) + s(Urbanisation, k=9) + s(Density, k=9) + 
+                s(Poverty, k=9) + s(Poor_Sanitation, k=9) + s(Unemployment, k=9) + s(Timeliness, k=9) +
+                s(Year, k=3) + s(lon, lat, k = 300), offset=log(Population), 
+                family = nb(link="log"), 
+                data = TBdata)
+
+
+
+
+```
+
+
+
+### **Appendix C**
+<br>
+```{r warning=FALSE, fig.width=12, fig.height=10, out.width='100%'}
+
+# Define the predictor variables
+variables <- c("Indigenous", "Illiteracy", "Urbanisation", "Density",
+               "Poverty", "Poor_Sanitation", "Unemployment", "Timeliness")
+
+# Create a data frame for plotting with overall predictions
+plot_data <- do.call(rbind, lapply(variables, function(var) {
+  
+  # Create a sequence of values for the target variable
+  values <- seq(min(TBdata[[var]], na.rm = TRUE), 
+                max(TBdata[[var]], na.rm = TRUE), 
+                length.out = 100)
+  
+  # Create a new data frame with all terms held at their mean
+  new_data <- as.data.frame(lapply(TBdata, mean, na.rm = TRUE))
+  
+  # Create 100 rows for prediction
+  new_data <- new_data[rep(1, 100), ]
+  
+  # Set the varying predictor
+  new_data[[var]] <- values
+  
+  # Predict values
+  pred <- predict(model_nb, newdata = new_data, type = "response", se.fit = TRUE)
+  
+  # Build the plot data frame
+  data.frame(
+    Value = values,
+    Mean_Rate = pred$fit * 100000,
+    Lower_Rate = (pred$fit - 1.96 * pred$se.fit) * 100000,
+    Upper_Rate = (pred$fit + 1.96 * pred$se.fit) * 100000,
+    Variable = var
+  )
+}))
+
+# New label formatting for facet titles
+new.label <- c(
+  Indigenous = "Indigenous",
+  Illiteracy = "Illiteracy",
+  Urbanisation = "Urbanisation",
+  Density = "Density",
+  Poverty = "Poverty",
+  Poor_Sanitation = "Poor Sanitation",
+  Unemployment = "Unemployment",
+  Timeliness = "Timeliness"
+)
+
+# Define softer, professional color palette
+line_color <- "#1f78b4"  # Soft blue for the line
+fill_color <- "#a6cee3"  # Lighter blue for confidence intervals
+
+# Plot using ggplot2 (single overall plot)
+ggplot(data = plot_data, aes(x = Value, y = Mean_Rate)) +
+  # CI shading with no outline, very subtle
+  geom_ribbon(aes(ymin = Lower_Rate, ymax = Upper_Rate), fill = fill_color, alpha = 0.4) +
+  # Thinner line for the trend
+  geom_line(size = 0.8, color = line_color) + 
+  facet_wrap(~ Variable, scales = "free_x", labeller = labeller(Variable = new.label)) +
+  labs(
+    title = "Predicted TB Rate vs. Covariate Variables ",
+    x = "Predictor Value",
+    y = "Predicted TB Rate (per 100,000 Population)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    axis.title = element_text(size = 10),
+    legend.position = "none",  # Remove legend since there's no categorical variable now
+    strip.text = element_text(size = 10)  # Improve readability of facet labels
+  )
+
+```
+
+
+
+### **Appendix D**
+<br>
+```{r warning=FALSE}
+
+par(mfrow=c(1,2))
+# QQ plot
+qq.gam(model_nb,pch=20)
+# deviance residuals vs linear predictor
+xx <- model_nb$linear.predictors
+yy <- residuals(model_nb,type="deviance")
+plot(xx,yy,pch=20,xlab="Linear predictor",ylab="Deviance residuals")
+abline(h=0, col="red")
+
+```
+
+
+```{r warning=FALSE}
+summary(model_nb)
+```
+
+### **Appendix E**
+<br>
+```{r warning=FALSE, fig.width=12, fig.height=12, out.width='100%'}
+
+# Extract coefficients and calculate effect sizes
+coeffs <- broom::tidy(model_nb) %>%
+  filter(!term %in% "(Intercept)") %>%
+  mutate(
+    Effect_Size = statistic / sqrt(edf),
+    term = gsub("s\\(|\\)", "", term),  # Clean variable names
+    `P-Value` = ifelse(p.value < 0.05, "p < 0.05", sprintf("%.3f", p.value))  # Format p-values
+  )
+
+# Create the table using gt
+coeffs %>%
+  dplyr::select(term, Effect_Size, `P-Value`) %>%
+  rename(
+    Predictor = term,
+    `Effect Size` = Effect_Size,
+  ) %>%
+  gt() %>%
+  
+  # Add table header
+  tab_header(
+    title = md("**Effect Size of Covariate Factors on TB Rate**"),
+  ) %>%
+  
+  # Format numeric columns to 3 decimal places
+  fmt_number(
+    columns = c(`Effect Size`),
+    decimals = 3
+  ) %>%
+  
+  # Reverse color scheme (white = strongest, red = weakest)
+  data_color(
+    columns = `Effect Size`,
+    colors = scales::col_numeric(
+      palette = c("#E31A1C", "#FD8D3C", "#FFFFA0"),  # Red → Orange → White
+      domain = NULL
+    )
+  ) %>%
+  
+  # Adjust column labels and alignment
+  cols_label(
+    Predictor = "Covariate",
+    `Effect Size` = "Effect Size",
+    `P-Value` = "P-Value"
+  ) %>%
+  
+  # Adjust table alignment and font sizes
+  cols_align(
+    align = "center",
+    columns = everything()
+  ) %>%
+  
+  # Improve table styling
+  tab_options(
+    table.width = px(800),
+    heading.align = "left",
+    column_labels.font.size = px(14),
+    table.font.size = px(12),
+    column_labels.font.weight = "bold",
+    column_labels.background.color = "#f2f2f2"
+  ) %>%
+  
+  # Fix row alignment using v_align
+  tab_style(
+    style = cell_text(size = px(12), v_align = "middle"),
+    locations = cells_body()
+  )
+
+```
+
+
+### **Appendix F**
+<br>
+```{r warning=FALSE, fig.width=12, fig.height=12, out.width='100%'}
+
+
+# Compute the predicted rate (ensuring TB rate is per 100,000)
+predicted_rate <- predict(model_nb, type = "response", newdata = TBdata) * 100000
+
+
+# Urbanisation Plot 
+p1 <- ggplot(TBdata, aes(x = Poverty, y = Urbanisation)) +
+  geom_jitter(aes(size = TB, color = predicted_rate), alpha = 0.9, width = 1, height = 1) +
+  geom_smooth(color = "black", method = "loess", se = FALSE, linewidth = 0.7) +
+  
+  scale_color_gradientn(
+    colors = c("#E31A1C", "#FD8D3C", "#FFFFB2"),
+    name = "TB Predicted Rate",
+    labels = scales::comma_format(accuracy = 1)  
+  ) +
+  
+  scale_size_continuous(
+    range = c(2, 8),
+    name = "TB Cases"
+  ) +
+  
+  facet_wrap(~Year, nrow = 1) + 
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 10, face = "bold"),
+    axis.title.y = element_text(size = 9),
+    axis.text = element_text(size = 8),
+    legend.position = "bottom" 
+  ) +
+  labs(
+    x = NULL,
+    y = "Urbanisation"
+  )
+
+
+# Poor Sanitation Plot 
+p2 <- ggplot(TBdata, aes(x = Poverty, y = Poor_Sanitation)) +
+  geom_jitter(aes(size = TB, color = predicted_rate), alpha = 0.9, width = 1, height = 1) +
+  geom_smooth(color = "black", method = "loess", se = FALSE, linewidth = 0.7) +
+  
+  scale_color_gradientn(
+    colors = c("#E31A1C", "#FD8D3C", "#FFFFB2"),
+    name = "TB Predicted Rate",
+    labels = function(x) round(x * mean(TBdata$Population), 0)
+  ) +
+  
+  scale_size_continuous(
+    range = c(2, 8),
+    name = "TB Cases"
+  ) +
+  
+  facet_wrap(~Year, nrow = 1) +
+  theme_minimal() +
+  theme(
+    strip.text = element_blank(),
+    axis.title.y = element_text(size = 9),
+    axis.text = element_text(size = 8),
+    legend.position = "none"
+  ) +
+  labs(
+    x = NULL,
+    y = "Sanitation"
+  )
+
+# Unemployment Plot 
+p3 <- ggplot(TBdata, aes(x = Poverty, y = Unemployment)) +
+  geom_jitter(aes(size = TB, color = predicted_rate), alpha = 0.9, width = 1, height = 1) +
+  geom_smooth(color = "black", method = "loess", se = FALSE, linewidth = 0.7) +
+  
+  scale_color_gradientn(
+    colors = c("#E31A1C", "#FD8D3C", "#FFFFB2"),
+    name = "TB Predicted Rate",
+    labels = function(x) round(x * mean(TBdata$Population), 0)
+  ) +
+  
+  scale_size_continuous(
+    range = c(2, 8),
+    name = "TB Cases"
+  ) +
+  
+  facet_wrap(~Year, nrow = 1) +
+  theme_minimal() +
+  theme(
+    strip.text = element_blank(),
+    axis.title.y = element_text(size = 9),
+    axis.text = element_text(size = 8),
+    legend.position = "none"
+  ) +
+  labs(
+    x = "Poverty Level",
+    y = "Unemployment"
+  )
+
+# Combine the plots
+combined_plot <- (p1 / p2 / p3) + 
+  plot_layout(guides = "collect") +  
+  plot_annotation(
+    title = "How Poverty Affects Other Socio-Economic Factors",
+    theme = theme(
+      plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+      plot.caption = element_text(size = 10)
+    )
+  )
+combined_plot <- combined_plot + 
+  guides(
+    color = guide_colorbar(
+      barwidth = 8,  
+      barheight = 0.5, 
+      title.position = "top",
+      title.theme = element_text(size = 10) 
+    ),
+    size = guide_legend(
+      keywidth = 0.5,
+      keyheight = 0.5,
+      title.position = "top",
+      title.theme = element_text(size = 10) 
+    )
+  )
+
+print(combined_plot)
+```
+
+
+### **Appendix G**
+<br>
+```{r warning=FALSE, fig.width=12, fig.height=8, out.width='100%', cache=TRUE}
+# Create contour map of spatial variation
+vis.gam(model_nb, view = c("lon", "lat"), plot.type = "contour",
+        color = "heat", main = "Spatial Predicted TB Rate Across Brazil", 
+        n.grid = 300, too.far = 0.1)
+
+
+```
+
+
+### **Appendix H**
+<br>
+```{r warning=FALSE}
+
+TBdata_new <- TBdata %>%
+  dplyr::select(`Region`, `Year`, `Indigenous`, `Illiteracy`, `Urbanisation`, `Density`, `Poverty`, 
+                `Poor_Sanitation`, `Unemployment`, `Population`, `Timeliness`, `lon`, `lat`)
+
+# Predict TB rates for all years at once
+TBdata_new$Predicted_TB <- predict(model_nb, newdata = TBdata_new, type = "response")
+
+# Rescale the predicted TB rates (per 100,000 population)
+TBdata_new <- TBdata_new %>%
+  mutate(Predicted_TB_Scaled = Predicted_TB * 100000)
+
+high_risk_threshold <- TBdata_new %>%
+  group_by(Year) %>%
+  summarise(threshold = quantile(Predicted_TB_Scaled, 0.90, na.rm = TRUE))
+
+fixed_threshold <- 40
+
+
+high_risk_regions_fixed <- TBdata_new %>%
+  filter(Predicted_TB_Scaled > fixed_threshold) %>%
+  group_by(Year) %>%
+  summarise(Total_High_Risk_Regions = n())
+
+top_high_risk_regions <- TBdata_new %>%
+  group_by(Year) %>%
+  arrange(desc(Predicted_TB_Scaled)) %>%
+  slice_head(n = 3) %>%
+  summarise(Highest_Risk_Regions = paste(Region, collapse = ", "))
+
+high_risk_regions_fixed <- left_join(high_risk_regions_fixed, top_high_risk_regions, by = "Year")
+
+high_risk_regions_fixed %>%
+  gt() %>%
+  tab_header(
+    title = "High-Risk TB Regions Per Year in Brazil"
+  ) %>%
+  fmt_number(
+    columns = c("Total_High_Risk_Regions"),
+    decimals = 0
+  ) %>%
+  cols_label(
+    Year = "Year",
+    Total_High_Risk_Regions = "High-Risk Regions",
+    Highest_Risk_Regions = "Highest-Risk Regions"
+  ) %>%
+  tab_options(
+    table.font.size = 12,
+    heading.title.font.size = 14,
+    heading.align = "center"
+  ) %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "#f9f9f9"),
+      cell_text(weight = "bold")
+    ),
+    locations = cells_column_labels()
+  ) %>%
+  tab_style(
+    style = list(
+      cell_text(size = px(12))
+    ),
+    locations = cells_body()
+  ) %>%
+  tab_style(
+    style = cell_borders(sides = "all", color = "grey", weight = px(1)),
+    locations = cells_body()
+  )
+
+```
+
+
+
+
+### **Appendix I**
+<br>
+```{r warning=FALSE, fig.width=12, fig.height=6, out.width='100%'}
+
+
+# Create the ridge plot data
+tb_ridge <- TBdata %>%
+  mutate(
+    Predicted_Rate = predict(model_nb, type = "response")
+  )
+
+ggplot(tb_ridge, aes(x = Predicted_Rate, y = factor(Year), fill = ..x..)) +
+  geom_density_ridges_gradient(scale = 2, rel_min_height = 0.01) +
+  scale_fill_viridis(name = "Predicted TB Rate", option = "C") +
+  labs(
+    title = "Predicted TB Rates Over Time",
+    x = "Predicted TB Rate",
+    y = "Year"
+  ) +
+  theme_ipsum() +
+  theme(
+    legend.position = "right",
+    panel.spacing = unit(0.1, "lines"),
+    strip.text.x = element_text(size = 8)
+  )
+
+    
+```
+
+
+### **Appendix J**
+<br>
+```{r warning=FALSE, fig.width=12, fig.height=18, fig.align='center'}
+
+TBdata$TB_rate <- TBdata$TB / TBdata$Population
+
+
+# Predict TB rate
+TBdata$Predicted_TB_Rate <- predict(model_nb, newdata = TBdata)
+
+tb_min <- min(TBdata$Predicted_TB_Rate, na.rm = TRUE)
+tb_max <- max(TBdata$Predicted_TB_Rate, na.rm = TRUE)
+
+par(mfcol = c(3, 1), mar = c(4, 4, 2, 2), oma = c(5, 5, 5, 5))
+
+for (yr in c(2012, 2013, 2014)) {
+  
+  TB_subset <- TBdata$Predicted_TB_Rate[TBdata$Year == yr]
+  
+  plot.map(
+    TB_subset, 
+    n.levels = 15, 
+    main = paste("Predicted TB Risk for", yr)
+  )
+}
+```
+
+
+
+
+
+
+
+

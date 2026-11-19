@@ -1,0 +1,11 @@
+.ipynb_checkpoints/
+__pycache__/
+.DS_Store
+.Rproj.user/
+.Rhistory
+.RData
+.Rapp.history
+*_cache/
+
+# Large datasets kept out of the repo (see README)
+gene_file.csv
